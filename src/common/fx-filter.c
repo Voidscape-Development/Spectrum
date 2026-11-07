@@ -185,6 +185,8 @@ fx_filter_t *fx_filter_create(const struct fx_filter_def *def, obs_data_t *setti
 		fx->has_gradient = true;
 		gradient_init(&fx->gradient, context, def->gradient_prefix);
 	}
+	if (def->create)
+		def->create(fx, settings);
 	fx_filter_update(fx, settings);
 	return fx;
 }
@@ -193,6 +195,8 @@ void fx_filter_destroy(fx_filter_t *fx)
 {
 	if (!fx)
 		return;
+	if (fx->def->destroy)
+		fx->def->destroy(fx);
 	obs_enter_graphics();
 	if (fx->effect)
 		gs_effect_destroy(fx->effect);
@@ -217,6 +221,8 @@ void fx_filter_update(fx_filter_t *fx, obs_data_t *settings)
 	fx->height = (uint32_t)obs_data_get_int(settings, "height");
 	if (fx->has_gradient)
 		gradient_update(&fx->gradient, settings);
+	if (fx->def->update)
+		fx->def->update(fx, settings);
 }
 
 obs_data_t *fx_filter_settings(fx_filter_t *fx)
@@ -234,6 +240,8 @@ void fx_filter_tick(fx_filter_t *fx, float seconds)
 	fx->time = fmodf(fx->time + seconds, 3600.0f);
 	if (fx->has_gradient)
 		gradient_tick(&fx->gradient, seconds);
+	if (fx->def->tick)
+		fx->def->tick(fx, seconds);
 }
 
 /* ------------------------------------------------------------------------

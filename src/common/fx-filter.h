@@ -38,6 +38,11 @@ struct fx_filter_def {
 			   uint32_t width, uint32_t height);
 	// Extra margin the effect draws outside the source, in px (filters).
 	uint32_t (*padding)(obs_data_t *settings);
+	// Optional lifetime hooks for the effect's own data (fx->user).
+	void (*create)(fx_filter_t *fx, obs_data_t *settings);
+	void (*update)(fx_filter_t *fx, obs_data_t *settings);
+	void (*tick)(fx_filter_t *fx, float seconds);
+	void (*destroy)(fx_filter_t *fx);
 };
 
 struct fx_filter {
