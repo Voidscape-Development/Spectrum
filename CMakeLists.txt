@@ -167,6 +167,7 @@ target_sources(
     src/fx/gradient-map.c
     src/fx/long-shadow.c
     src/fx/bevel.c
+    src/fx/color-tools.c
     src/fx/shape-source.c
     src/fx/noise-source.c
     src/animate/animate-filter.c

@@ -1016,7 +1016,7 @@ bool gradient_bind_lut(gradient_t *g, gs_effect_t *effect)
 		gs_effect_set_texture(p, g->lut_texture);
 	set_float(effect, "gradient_lut_size", (float)GRADIENT_LUT_SIZE);
 	set_float(effect, "gradient_offset", g->offset + g->time_scroll);
-	set_int(effect, "gradient_repeat", (int)g->repeat);
+	set_float(effect, "gradient_repeat", (float)g->repeat);
 	set_float(effect, "gradient_hue", (float)((g->hue_shift + g->time_hue) * M_PI / 180.0));
 	return true;
 }

@@ -127,8 +127,21 @@ static void bind_settings(gs_effect_t *effect, obs_data_t *from, obs_data_t *to,
 		if (is_reserved(info.name))
 			continue;
 		obs_data_item_t *item = obs_data_item_byname(from, info.name);
-		if (!item)
+		if (!item) {
+			// OBS rejects drawing with a uniform that was never set and
+			// has no default in the shader (ints never have one): zero it.
+			if (gs_effect_get_default_val_size(param) == 0) {
+				static const float zero[16] = {0};
+				if (info.type == GS_SHADER_PARAM_FLOAT || info.type == GS_SHADER_PARAM_INT ||
+				    info.type == GS_SHADER_PARAM_BOOL)
+					gs_effect_set_val(param, zero, 4);
+				else if (info.type == GS_SHADER_PARAM_VEC2)
+					gs_effect_set_val(param, zero, 8);
+				else if (info.type == GS_SHADER_PARAM_VEC4)
+					gs_effect_set_val(param, zero, 16);
+			}
 			continue;
+		}
 		const enum obs_data_number_type num = obs_data_item_numtype(item);
 		obs_data_item_release(&item);
 
