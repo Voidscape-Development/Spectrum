@@ -1,0 +1,115 @@
+// Spectrum Bevel & Emboss: lights a height map built from the source's
+// alpha (a soft disk sample, so the edge profile is smooth) with a
+// directional light, then screens a highlight and multiplies a shadow onto
+// the source.
+#include "fx-common.effect"
+
+uniform int bv_style;              // 1 inner bevel, 2 outer bevel, 3 emboss, 4 pillow emboss
+uniform float bv_size = 12.0;      // px
+uniform float bv_depth = 100.0;    // %
+uniform float bv_angle = 135.0;    // light azimuth, degrees (where the light comes from)
+uniform float bv_altitude = 30.0;  // degrees
+uniform float4 bv_highlight;
+uniform float4 bv_shadow;
+uniform float bv_highlight_amount = 75.0; // %
+uniform float bv_shadow_amount = 75.0;    // %
+uniform bool bv_invert;                   // pressed in instead of raised
+
+// Average alpha over a disk of radius r px (65 samples on 8 rings, area
+// weighted). Many rings keep the profile smooth near straight edges.
+float disk_alpha(float2 uv, float r)
+{
+	float2 px = 1.0 / uv_size;
+	float sum = fx_input_border(uv).a * 0.25;
+	float n = 0.25;
+	for (int ring = 1; ring <= 8; ring++) {
+		float rr = r * (float(ring) - 0.5) / 8.0;
+		float w = float(ring) - 0.5; // ring area grows with the radius
+		for (int k = 0; k < 8; k++) {
+			float a = (float(k) + 0.618 * float(ring)) * (TAU / 8.0);
+			sum += fx_input_border(uv + float2(cos(a), sin(a)) * rr * px).a * w;
+			n += w;
+		}
+	}
+	return sum / n;
+}
+
+// Height profile in [0, 1] for the style.
+float height(float2 uv)
+{
+	float r = max(bv_size, 0.5);
+	float b = disk_alpha(uv, r);
+	float h;
+	if (bv_style == 2)
+		h = saturate(b * 2.0); // rises outside the edge up to it
+	else if (bv_style == 1)
+		h = saturate(b * 2.0 - 1.0); // rises inside from the edge
+	else if (bv_style == 4)
+		h = 1.0 - abs(b * 2.0 - 1.0); // ridge at the edge (pillow)
+	else
+		h = b;
+	h = h * h * (3.0 - 2.0 * h);
+	return bv_invert ? 1.0 - h : h;
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float4 src = fx_input(v_in.uv);
+	float2 px = 1.0 / uv_size;
+	float e = max(bv_size * 0.25, 1.0);
+
+	float hx = height(v_in.uv + float2(e, 0.0) * px) - height(v_in.uv - float2(e, 0.0) * px);
+	float hy = height(v_in.uv + float2(0.0, e) * px) - height(v_in.uv - float2(0.0, e) * px);
+	float depth = bv_depth / 100.0 * max(bv_size, 0.5) / e;
+	float3 n = normalize(float3(-hx * depth, -hy * depth, 1.0));
+
+	float az = bv_angle * PI / 180.0;
+	float alt = clamp(bv_altitude, 0.0, 90.0) * PI / 180.0;
+	// Screen space is y down; the light comes from the azimuth direction.
+	float3 l = normalize(float3(cos(az) * cos(alt), -sin(az) * cos(alt), sin(alt)));
+	float shade = dot(n, l) - l.z; // relative to a flat surface
+
+	float hi = saturate(shade * 2.0) * saturate(bv_highlight_amount / 100.0) * bv_highlight.a;
+	float lo = saturate(-shade * 2.0) * saturate(bv_shadow_amount / 100.0) * bv_shadow.a;
+
+	// Where the shading applies: inside for inner styles, outside for outer.
+	float inside = src.a;
+	float region;
+	if (bv_style == 1)
+		region = inside;
+	else if (bv_style == 2)
+		region = 1.0 - inside;
+	else
+		region = 1.0;
+
+	float4 result = src;
+	if (bv_style == 2 || bv_style >= 3) {
+		// Shading outside the source is drawn on its own (no source color
+		// there): a translucent highlight or shadow.
+		float out_a = (1.0 - inside) * max(hi, lo) * (region > 0.0 ? 1.0 : 0.0);
+		float3 out_rgb = hi > lo ? bv_highlight.rgb : bv_shadow.rgb;
+		float4 outside = float4(out_rgb, out_a);
+		float4 inner = src;
+		if (bv_style >= 3) {
+			inner.rgb = 1.0 - (1.0 - inner.rgb) * (1.0 - bv_highlight.rgb * hi);
+			inner.rgb = inner.rgb * lerp(float3(1.0, 1.0, 1.0), bv_shadow.rgb, lo);
+		}
+		float a = inner.a + outside.a * (1.0 - inner.a);
+		float3 rgb = a > 0.0 ? (inner.rgb * inner.a + outside.rgb * outside.a * (1.0 - inner.a)) / a
+				     : float3(0.0, 0.0, 0.0);
+		result = float4(rgb, a);
+	} else {
+		result.rgb = 1.0 - (1.0 - result.rgb) * (1.0 - bv_highlight.rgb * hi);
+		result.rgb = result.rgb * lerp(float3(1.0, 1.0, 1.0), bv_shadow.rgb, lo);
+	}
+	return fx_output(result, v_in.uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}

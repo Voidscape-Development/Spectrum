@@ -165,6 +165,8 @@ target_sources(
     src/common/fx-filter.c
     src/common/fx-filter.h
     src/fx/gradient-map.c
+    src/fx/long-shadow.c
+    src/fx/bevel.c
     src/fx/shape-source.c
     src/fx/noise-source.c
     src/animate/animate-filter.c
