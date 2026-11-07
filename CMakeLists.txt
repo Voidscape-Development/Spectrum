@@ -165,6 +165,8 @@ target_sources(
     src/common/fx-filter.c
     src/common/presets.c
     src/common/presets.h
+    src/common/position-picker.cpp
+    src/common/position-picker.hpp
     src/common/fx-filter.h
     src/fx/gradient-map.c
     src/fx/long-shadow.c

@@ -4,6 +4,7 @@
 // <module config>/presets.json as {"<id>": [{"name": ..., "settings": {...}}]}.
 
 #include "presets.h"
+#include "position-picker.hpp"
 
 #include <util/platform.h>
 
@@ -176,6 +177,7 @@ void spectrum_presets_properties(obs_properties_t *props, obs_source_t *source)
 {
 	if (!source)
 		return;
+	spectrum_position_picker_properties(props, source);
 	obs_properties_t *group = obs_properties_create();
 
 	obs_property_t *list = obs_properties_add_list(group, KEY_LIST, obs_module_text("Presets.Preset"),
