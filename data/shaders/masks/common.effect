@@ -1,0 +1,126 @@
+
+#define PI180 0.0174533f
+#define SQRT3 0.5773503f
+#define LUM_R 0.299f
+#define LUM_G 0.587f
+#define LUM_B 0.114f
+#define SIN30 0.5f
+#define COS30 0.8660254f
+#define PI  3.141592654f
+#define PI2 6.283185307f
+#define mod(x, y) (x - y * floor(x / y))
+
+// Anti-aliased coverage (1 inside, 0 outside) for a signed distance d that is
+// negative inside the shape. The ramp is sized from how fast d changes per
+// output pixel rather than per source pixel, so edges stay one screen pixel
+// wide when the source is scaled down (where a fixed 1px ramp would alias) or
+// up (where it would blur), and stay even where d isn't a true Euclidean
+// distance, such as squircle corners. Must be called in uniform control flow.
+float EdgeAlpha(float d)
+{
+	float w = max(fwidth(d), 0.00001f);
+	return saturate(0.5f - d / w);
+}
+
+// Corner styles match MASK_CORNER_STYLE_* in mask-shape.h:
+// 1 = round, 2 = squircle, 3 = slant.
+
+// Signed distance to a convex corner, given the signed distances d1 and d2
+// to the two edges meeting at it (negative inside). r is how far the corner
+// shaping reaches in along each edge normal, n is the superellipse exponent
+// used by squircle corners, and slant_scale (1 / |n1 + n2|) turns the slant
+// cut into a true distance.
+float CornerSDF(float d1, float d2, float r, float style, float n, float slant_scale)
+{
+	float2 u = float2(d1, d2) + r;
+	float inner = min(max(u.x, u.y), 0.0f);
+	float2 v = max(u, float2(0.0f, 0.0f));
+	if (style > 2.5f) {
+		return max(max(d1, d2), (d1 + d2 + r) * slant_scale);
+	}
+	if (style > 1.5f) {
+		// Scale by the larger component so pow() can't overflow.
+		float m = max(max(v.x, v.y), 0.00001f);
+		float2 w = v / m;
+		return m * pow(pow(w.x, n) + pow(w.y, n), 1.0f / n) + inner - r;
+	}
+	return length(v) + inner - r;
+}
+
+// Restyles one corner of a shape whose corners are rounded by growing it
+// outward by r (round_d). q is the position relative to the corner's arc
+// center and n1, n2 are the outward normals of the two edges meeting there.
+// Every style meets the edges at the same points as the round corner, so only
+// the region between the two normals changes.
+float StyledCornerSDF(float round_d, float2 q, float2 n1, float2 n2, float r, float style, float n)
+{
+	if (style > 2.5f) {
+		float2 bisector = n1 + n2;
+		float chord = (dot(q, bisector) - r * (1.0f + dot(n1, n2))) / max(length(bisector), 0.0001f);
+		return max(round_d, chord);
+	}
+	if (style > 1.5f) {
+		// Map the arc's angular span onto a right angle and use the
+		// superellipse radius there, so the corner bulges the same at any
+		// angle and still meets each edge tangentially.
+		float2 e2 = n2 - dot(n2, n1) * n1;
+		e2 /= max(length(e2), 0.0001f);
+		float span = acos(clamp(dot(n1, n2), -1.0f, 1.0f));
+		float psi = atan2(dot(q, e2), dot(q, n1));
+		if (psi < 0.0f || psi > span) {
+			return round_d;
+		}
+		float phi = psi / max(span, 0.0001f) * 1.5707963f;
+		float scale = pow(pow(cos(phi), n) + pow(sin(phi), n), -1.0f / n);
+		// Don't bulge past where the edges meet on obtuse corners.
+		float mitered = max(dot(q, n1), dot(q, n2)) - r;
+		return max(length(q) - r * scale, mitered);
+	}
+	return round_d;
+}
+
+// Convert pre-multiplied rgba values
+// to linear rgba.
+float4 pmrgba_to_rgba(float4 color)
+{
+	return saturate(float4(color.rgb / color.a, color.a));
+}
+
+float4 adjust_brightness(float4 color, float brightness)
+{
+	return saturate(float4(color.rgb + brightness, color.a));
+}
+
+float4 adjustments(float4 color, float b, float c, float s, float hue_shift) {
+	// Calculate Contrast Value
+	float ca = c < 0.0f ? 1.0f / (-c + 1.0f) : (c + 1.0f);
+
+	// Calculate Saturation Values
+	float s_r = (1.0f - s) * LUM_R;
+	float s_g = (1.0f - s) * LUM_G;
+	float s_b = (1.0f - s) * LUM_B;
+
+	float3 col = float3(
+		ca * (s_r + s) * color.r + ca * s_g * color.g + ca * s_b * color.b + b,
+		ca * s_r * color.r + ca * (s_g + s) * color.g + ca * s_b * color.b + b,
+		ca * s_r * color.r + ca * s_g * color.g + ca * (s_b + s) * color.b + b
+	);
+	
+	// Calculate Hue shift values
+	float half_angle = 0.5f * hue_shift * PI180;
+	float rq = SQRT3 * sin(half_angle);
+	float cross = rq * rq;
+	float sq = 2.0f * cross;
+	float d = 2.0f * (0.5f - sq);
+	float w_imag = rq * cos(half_angle);
+	float a_l = 2.0f * (cross + w_imag);
+	float b_l = 2.0f * (cross - w_imag);
+	
+	
+	return saturate(float4(
+		col.r * d   + col.g * a_l + col.b * b_l,
+		col.r * b_l + col.g * d   + col.b * a_l,
+		col.r * a_l + col.g * b_l + col.b * d,
+		color.a
+	));
+}

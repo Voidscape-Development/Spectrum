@@ -1,0 +1,252 @@
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform texture2d output_image;
+// The (padded, straight alpha) filter input, to find untouched pixels.
+uniform texture2d input_image;
+uniform texture2d glow_fill_source;
+uniform float4 glow_fill_color;
+uniform texture2d glow_mask;
+uniform float intensity;
+uniform float2 offset;
+uniform float threshold;
+
+// For crop/padding
+uniform float2 mul_val;
+uniform float2 add_val;
+
+// Output dithering
+uniform float2 dither_size;
+
+// Set when working in a float (non-SDR) color space: the crop/pad pass then
+// sRGB-encodes the linear input itself (extended range, so HDR values above
+// 1.0 survive and the rest of the pipeline is unchanged), and the output
+// pass skips the 8-bit dither and clamping.
+uniform float encode_input = 0.0;
+uniform float hdr_output = 0.0;
+
+sampler_state textureSampler{
+    Filter = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+    MinLOD = 0;
+    MaxLOD = 0;
+};
+
+sampler_state padSampler {
+	Filter    = Linear;
+	AddressU  = Border;
+	AddressV  = Border;
+	BorderColor = 00000000;
+};
+
+struct VertData
+{
+	float4 pos : POSITION;
+	float2 uv : TEXCOORD0;
+};
+
+VertData mainTransform(VertData v_in)
+{
+	v_in.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	return v_in;
+}
+
+
+VertData VSCrop(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv = v_in.uv * mul_val + add_val;
+	return vert_out;
+}
+
+
+float srgb_nonlinear_to_linear_channel(float u)
+{
+	return (u <= 0.04045) ? (u / 12.92) : pow((u + 0.055) / 1.055, 2.4);
+}
+
+float4 srgb_nonlinear_to_linear(float4 v)
+{
+	return float4(srgb_nonlinear_to_linear_channel(v.r), srgb_nonlinear_to_linear_channel(v.g), srgb_nonlinear_to_linear_channel(v.b), v.a);
+}
+
+float srgb_linear_to_nonlinear_channel(float u)
+{
+	return (u <= 0.0031308) ? (12.92 * u) : ((1.055 * pow(u, 1. / 2.4)) - 0.055);
+}
+
+float4 srgb_linear_to_nonlinear(float4 v)
+{
+	return float4(srgb_linear_to_nonlinear_channel(v.r), srgb_linear_to_nonlinear_channel(v.g), srgb_linear_to_nonlinear_channel(v.b), v.a);
+}
+
+float rng(float2 p)
+{
+	return frac(52.9829189 * frac(0.06711056 * p.x + 0.00583715 * p.y));
+}
+
+// Dither noise for the 8-bit output, applied everywhere the glow can create
+// gradients (including inside inner glows and the dense part of outer
+// glows). Kept just under +/-0.5 of an 8-bit step so pixels that are already
+// exactly on an 8-bit level (unmodified source content) round back to the
+// same value.
+float dither_noise(float2 p)
+{
+	return (rng(p) - 0.5) * (0.96 / 255.0);
+}
+
+float4 PSCrop(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(padSampler, v_in.uv);
+	rgba.rgb *= (rgba.a > 0.) ? (1. / rgba.a) : 0.;
+	return encode_input > 0.5 ? srgb_linear_to_nonlinear(rgba) : rgba;
+}
+
+float4 drawOutput(VertData v_in) : TARGET
+{
+	float4 px = output_image.Sample(textureSampler, v_in.uv);
+	float2 pix = v_in.uv * dither_size;
+	// Only dither pixels the glow changed, so untouched source content
+	// passes through bit-exact.
+	float4 src = input_image.Sample(textureSampler, v_in.uv);
+	float4 diff = abs(px - src);
+	float changed = step(0.5 / 255.0, max(max(diff.r, diff.g), max(diff.b, diff.a)));
+	if (hdr_output < 0.5) {
+		px.rgb = saturate(px.rgb + dither_noise(pix) * changed);
+		px.a = saturate(px.a + dither_noise(pix + 17.13) * changed);
+	}
+	return srgb_nonlinear_to_linear(px);
+}
+
+float4 mainImageThresholdMask(VertData v_in) : TARGET
+{
+	float4 color = image.Sample(textureSampler, v_in.uv);
+	return float4(clamp(color.a / max(threshold, 0.0001), 0.0, 1.0), 0.0, 0.0, 1.0);
+}
+
+// Straight-alpha "a over b".
+float4 blend_over(float4 a, float4 b)
+{
+	float out_a = a.a + b.a * (1.0 - a.a);
+	float3 premul = a.rgb * a.a + b.rgb * b.a * (1.0 - a.a);
+	return float4(out_a > 0.0 ? premul / out_a : float3(0.0, 0.0, 0.0), out_a);
+}
+
+float4 fill_from_source(float2 uv)
+{
+	float4 fill_col = srgb_nonlinear_to_linear(glow_fill_source.Sample(textureSampler, uv));
+	fill_col.rgb *= (fill_col.a > 0.) ? (1. / fill_col.a) : 0.;
+	return srgb_linear_to_nonlinear(fill_col);
+}
+
+// The input texture was already converted to straight alpha by PSCrop, and
+// the output must be straight alpha too (OBS blends it with SRCALPHA).
+float4 outer_glow(VertData v_in, float4 fill)
+{
+	float mask = glow_mask.Sample(textureSampler, v_in.uv - offset).r;
+	float4 color = image.Sample(textureSampler, v_in.uv);
+	float4 glow = float4(fill.rgb, clamp(fill.a * intensity * mask, 0.0, 1.0));
+	// No glow behind the parts of the source above the threshold.
+	glow.a *= 1.0 - step(threshold, color.a);
+	return blend_over(color, glow);
+}
+
+float4 inner_glow(VertData v_in, float4 fill)
+{
+	float3 gamma = float3(2.2f, 2.2f, 2.2f);
+	float3 gamma_i = float3(0.454545f, 0.454545f, 0.454545f);
+
+	float4 mask_col = glow_mask.Sample(textureSampler, v_in.uv - offset);
+	float4 color = image.Sample(textureSampler, v_in.uv);
+	// max(): wide gamut HDR input can have negative components.
+	float3 color_rgb_l = pow(max(color.rgb, 0.0), gamma);
+	float3 glow_fill_l = pow(fill.rgb, gamma);
+
+	float mask_alpha = clamp(intensity * fill.a * (1.0f - mask_col.r), 0.0f, 1.0f);
+	return float4(pow(glow_fill_l * mask_alpha + color_rgb_l * (1.0 - mask_alpha), gamma_i), color.a);
+}
+
+float4 mainImageOuterGlowColor(VertData v_in) : TARGET
+{
+	return outer_glow(v_in, glow_fill_color);
+}
+
+float4 mainImageOuterGlowSource(VertData v_in) : TARGET
+{
+	return outer_glow(v_in, fill_from_source(v_in.uv));
+}
+
+float4 mainImageInnerGlowColor(VertData v_in) : TARGET
+{
+	return inner_glow(v_in, glow_fill_color);
+}
+
+float4 mainImageInnerGlowSource(VertData v_in) : TARGET
+{
+	return inner_glow(v_in, fill_from_source(v_in.uv));
+}
+
+technique DrawCropPad
+{
+	pass
+	{
+		vertex_shader = VSCrop(v_in);
+		pixel_shader = PSCrop(v_in);
+	}
+}
+
+technique DrawOutput
+{
+	pass
+	{
+		vertex_shader = VSCrop(v_in);
+		//vertex_shader = mainTransform(v_in);
+		pixel_shader = drawOutput(v_in);
+	}
+}
+
+technique ThresholdMask
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = mainImageThresholdMask(v_in);
+	}
+}
+
+technique FilterOuterGlowColor
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = mainImageOuterGlowColor(v_in);
+	}
+}
+
+technique FilterOuterGlowSource
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = mainImageOuterGlowSource(v_in);
+	}
+}
+
+technique FilterInnerGlowColor
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = mainImageInnerGlowColor(v_in);
+	}
+}
+
+technique FilterInnerGlowSource
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = mainImageInnerGlowSource(v_in);
+	}
+}

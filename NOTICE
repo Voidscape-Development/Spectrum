@@ -1,0 +1,18 @@
+Spectrum
+Copyright (C) 2026 Voidscape Development
+
+Spectrum is free software, distributed under the terms of the GNU General
+Public License, version 2 or (at your option) any later version. See LICENSE.
+
+Portions of Spectrum are derived from the following GPL-2.0 programs by
+FiniteSingularity, and remain copyright their original author:
+
+  - obs-composite-blur      https://github.com/FiniteSingularity/obs-composite-blur
+  - obs-stroke-glow-shadow  https://github.com/FiniteSingularity/obs-stroke-glow-shadow
+  - obs-advanced-masks      https://github.com/FiniteSingularity/obs-advanced-masks
+
+These portions were modified by Voidscape Development in 2026 to combine them
+into a single plugin.
+
+Some shaders adapt signed-distance-function code by Inigo Quilez
+(https://iquilezles.org/articles/distfunctions2d/), credited in those files.

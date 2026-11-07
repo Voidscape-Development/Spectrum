@@ -1,0 +1,193 @@
+// Stroke source: draws only the stroke/contours of another source.
+// Outputs straight (non-premultiplied) alpha.
+#include "jump-flood-common.effect"
+
+// 1.0 to fill the stroke in behind the shape (outer stroke only).
+uniform float infill;
+
+float4 PSCrop(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(padSampler, v_in.uv);
+	rgba.rgb *= (rgba.a > 0.) ? (1. / rgba.a) : 0.;
+	return rgba;
+}
+
+float4 drawOutput(VertData v_in) : TARGET
+{
+	return dither(output_image.Sample(padSampler, v_in.uv), v_in.uv);
+}
+
+// How much of the shape to cut out of an outer stroke/contour.
+float shape_cutout(float alpha)
+{
+	return saturate(alpha / max(threshold, 0.0001));
+}
+
+float4 outer_stroke(VertData v_in, float4 fill)
+{
+	float2 coord = v_in.uv * uv_size;
+	float4 c = overlay.Sample(textureSampler, v_in.uv);
+	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	float near_edge = stroke_offset > 0.0 ? edge_cov(sd - stroke_offset, 1.0) : 1.0;
+	float s = edge_cov(stroke_extent - sd, 1.0) * near_edge;
+	float cut = (1.0 - infill) * shape_cutout(c.a);
+	return float4(fill.rgb, saturate(fill.a * s - cut));
+}
+
+float4 inner_stroke(VertData v_in, float4 fill)
+{
+	float2 coord = v_in.uv * uv_size;
+	float4 c = overlay.Sample(textureSampler, v_in.uv);
+	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	return float4(fill.rgb, fill.a * inner_stroke_band(-sd) * inner_clip(sd, c.a));
+}
+
+float4 outer_contour(VertData v_in, float4 fill)
+{
+	float2 coord = v_in.uv * uv_size;
+	float4 c = overlay.Sample(textureSampler, v_in.uv);
+	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	float d = max(sd, 0.0);
+	float coverage = contour_bands(d) * contour_falloff(d);
+	return float4(fill.rgb, saturate(fill.a * coverage - shape_cutout(c.a)));
+}
+
+float4 inner_contour(VertData v_in, float4 fill)
+{
+	float2 coord = v_in.uv * uv_size;
+	float4 c = overlay.Sample(textureSampler, v_in.uv);
+	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	float d = max(-sd, 0.0);
+	float coverage = contour_bands(d) * contour_falloff(d) * inner_clip(sd, c.a);
+	return float4(fill.rgb, fill.a * coverage);
+}
+
+float4 drawStrokeColorImage(VertData v_in) : TARGET
+{
+	return outer_stroke(v_in, stroke_fill_color);
+}
+
+float4 drawStrokeSourceImage(VertData v_in) : TARGET
+{
+	return outer_stroke(v_in, stroke_fill_source.Sample(textureSampler, v_in.uv));
+}
+
+float4 drawStrokeInnerColorImage(VertData v_in) : TARGET
+{
+	return inner_stroke(v_in, stroke_fill_color);
+}
+
+float4 drawStrokeInnerSourceImage(VertData v_in) : TARGET
+{
+	return inner_stroke(v_in, stroke_fill_source.Sample(textureSampler, v_in.uv));
+}
+
+float4 drawContourColorImage(VertData v_in) : TARGET
+{
+	return outer_contour(v_in, stroke_fill_color);
+}
+
+float4 drawContourSourceImage(VertData v_in) : TARGET
+{
+	return outer_contour(v_in, stroke_fill_source.Sample(textureSampler, v_in.uv));
+}
+
+float4 drawContourInnerColorImage(VertData v_in) : TARGET
+{
+	return inner_contour(v_in, stroke_fill_color);
+}
+
+float4 drawContourInnerSourceImage(VertData v_in) : TARGET
+{
+	return inner_contour(v_in, stroke_fill_source.Sample(textureSampler, v_in.uv));
+}
+
+technique DrawCropPad
+{
+	pass
+	{
+		vertex_shader = VSCrop(v_in);
+		pixel_shader = PSCrop(v_in);
+	}
+}
+
+technique DrawOutput
+{
+	pass
+	{
+		vertex_shader = VSCrop(v_in);
+		pixel_shader = drawOutput(v_in);
+	}
+}
+
+technique DrawStrokeColor
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawStrokeColorImage(v_in);
+	}
+}
+
+technique DrawStrokeInnerColor
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawStrokeInnerColorImage(v_in);
+	}
+}
+
+technique DrawStrokeSource
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawStrokeSourceImage(v_in);
+	}
+}
+
+technique DrawStrokeInnerSource
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawStrokeInnerSourceImage(v_in);
+	}
+}
+
+technique DrawContourColor
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawContourColorImage(v_in);
+	}
+}
+
+technique DrawContourInnerColor
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawContourInnerColorImage(v_in);
+	}
+}
+
+technique DrawContourInnerSource
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawContourInnerSourceImage(v_in);
+	}
+}
+
+technique DrawContourSource
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawContourSourceImage(v_in);
+	}
+}

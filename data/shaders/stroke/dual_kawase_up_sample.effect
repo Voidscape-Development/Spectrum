@@ -1,0 +1,83 @@
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 texel_step;
+
+sampler_state textureSampler{
+    Filter = Linear;
+    AddressU = Clamp;
+    AddressV = Clamp;
+    MinLOD = 0;
+    MaxLOD = 0;
+};
+
+struct VertData {
+    float4 pos : POSITION;
+    float2 uv : TEXCOORD0;
+};
+
+// Treats everything outside the texture as transparent, so the source's
+// border acts as an edge (used when "ignore source border" is off).
+sampler_state borderSampler{
+    Filter = Linear;
+    AddressU = Border;
+    AddressV = Border;
+    BorderColor = 00000000;
+    MinLOD = 0;
+    MaxLOD = 0;
+};
+
+VertData mainTransform(VertData v_in)
+{
+    v_in.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    return v_in;
+}
+
+float4 mainImage(VertData v_in) : TARGET
+{
+    // Upsample filter as defined here:
+    // https://blog.en.uwa4d.com/2022/09/06/screen-post-processing-effects-chapter-5-dual-blur-and-its-implementation/
+    float col_dn    = image.Sample(textureSampler, v_in.uv + float2(0.0f,  texel_step.y)).r;
+    float col_up    = image.Sample(textureSampler, v_in.uv + float2(0.0f, -texel_step.y)).r;
+    float col_rt    = image.Sample(textureSampler, v_in.uv + float2( texel_step.x, 0.0f)).r;
+    float col_lt    = image.Sample(textureSampler, v_in.uv + float2(-texel_step.x, 0.0f)).r;
+    float col_dn_rt = image.Sample(textureSampler, v_in.uv + 0.5f*texel_step).r * 2.0f;
+    float col_dn_lt = image.Sample(textureSampler, v_in.uv + 0.5f*float2(-texel_step.x,  texel_step.y)).r * 2.0f;
+    float col_up_rt = image.Sample(textureSampler, v_in.uv + 0.5f*float2( texel_step.x, -texel_step.y)).r * 2.0f;
+    float col_up_lt = image.Sample(textureSampler, v_in.uv - 0.5f*texel_step).r * 2.0f;
+
+    float retVal = (col_dn + col_up + col_rt + col_lt + col_dn_rt + col_dn_lt + col_up_rt + col_up_lt)/12.0f;
+    return float4(retVal, 0.0, 0.0, 1.0);
+}
+
+float4 mainImageBorder(VertData v_in) : TARGET
+{
+    float col_dn    = image.Sample(borderSampler, v_in.uv + float2(0.0f,  texel_step.y)).r;
+    float col_up    = image.Sample(borderSampler, v_in.uv + float2(0.0f, -texel_step.y)).r;
+    float col_rt    = image.Sample(borderSampler, v_in.uv + float2( texel_step.x, 0.0f)).r;
+    float col_lt    = image.Sample(borderSampler, v_in.uv + float2(-texel_step.x, 0.0f)).r;
+    float col_dn_rt = image.Sample(borderSampler, v_in.uv + 0.5f*texel_step).r * 2.0f;
+    float col_dn_lt = image.Sample(borderSampler, v_in.uv + 0.5f*float2(-texel_step.x,  texel_step.y)).r * 2.0f;
+    float col_up_rt = image.Sample(borderSampler, v_in.uv + 0.5f*float2( texel_step.x, -texel_step.y)).r * 2.0f;
+    float col_up_lt = image.Sample(borderSampler, v_in.uv - 0.5f*texel_step).r * 2.0f;
+
+    float retVal = (col_dn + col_up + col_rt + col_lt + col_dn_rt + col_dn_lt + col_up_rt + col_up_lt)/12.0f;
+    return float4(retVal, 0.0, 0.0, 1.0);
+}
+
+technique DrawBorder
+{
+    pass
+    {
+        vertex_shader = mainTransform(v_in);
+        pixel_shader = mainImageBorder(v_in);
+    }
+}
+
+technique Draw
+{
+    pass
+    {
+        vertex_shader = mainTransform(v_in);
+        pixel_shader = mainImage(v_in);
+    }
+}
