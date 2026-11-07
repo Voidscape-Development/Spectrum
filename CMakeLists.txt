@@ -167,6 +167,7 @@ target_sources(
     src/fx/gradient-map.c
     src/fx/shape-source.c
     src/fx/noise-source.c
+    src/animate/animate-filter.c
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

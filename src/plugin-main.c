@@ -45,6 +45,9 @@ extern struct obs_source_info spectrum_gradient_map_filter;
 extern struct obs_source_info spectrum_shape_source;
 extern struct obs_source_info spectrum_noise_source;
 
+/* Animation */
+extern struct obs_source_info spectrum_animate_filter;
+
 #include "common/fx-filter.h"
 
 // Registers a filter built on the fx framework, which supports Move
@@ -87,6 +90,8 @@ bool obs_module_load(void)
 	register_fx_filter(&spectrum_gradient_map_filter);
 	obs_register_source(&spectrum_shape_source);
 	obs_register_source(&spectrum_noise_source);
+
+	obs_register_source(&spectrum_animate_filter);
 
 	obs_log(LOG_INFO, "loaded version %s", PLUGIN_VERSION);
 	return true;
