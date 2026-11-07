@@ -1,0 +1,201 @@
+// Spectrum Color Tools: exposure, white balance, contrast, levels, curves,
+// HSL by color range, vibrance/saturation, split toning and a 3D LUT, all in
+// float, dithered on output.
+#include "fx-common.effect"
+
+// Basic
+uniform float ct_exposure = 0.0;     // stops
+uniform float ct_temperature = 0.0;  // -100..100
+uniform float ct_tint = 0.0;         // -100..100
+uniform float ct_contrast = 0.0;     // -100..100
+uniform float ct_saturation = 0.0;   // -100..100
+uniform float ct_vibrance = 0.0;     // -100..100
+// Levels (%)
+uniform float ct_in_black = 0.0;
+uniform float ct_in_white = 100.0;
+uniform float ct_gamma = 1.0;
+uniform float ct_out_black = 0.0;
+uniform float ct_out_white = 100.0;
+// Curves: RGBA = red, green, blue, master; 1 x curve_size.
+uniform texture2d curve_lut;
+uniform float curve_size = 1024.0;
+uniform float curves_enabled = 0.0;
+// HSL ranges: reds, oranges, yellows, greens, aquas, blues, purples, magentas
+uniform float ct_hsl_0_h;
+uniform float ct_hsl_0_s;
+uniform float ct_hsl_0_l;
+uniform float ct_hsl_1_h;
+uniform float ct_hsl_1_s;
+uniform float ct_hsl_1_l;
+uniform float ct_hsl_2_h;
+uniform float ct_hsl_2_s;
+uniform float ct_hsl_2_l;
+uniform float ct_hsl_3_h;
+uniform float ct_hsl_3_s;
+uniform float ct_hsl_3_l;
+uniform float ct_hsl_4_h;
+uniform float ct_hsl_4_s;
+uniform float ct_hsl_4_l;
+uniform float ct_hsl_5_h;
+uniform float ct_hsl_5_s;
+uniform float ct_hsl_5_l;
+uniform float ct_hsl_6_h;
+uniform float ct_hsl_6_s;
+uniform float ct_hsl_6_l;
+uniform float ct_hsl_7_h;
+uniform float ct_hsl_7_s;
+uniform float ct_hsl_7_l;
+uniform float hsl_enabled = 0.0;
+// Split toning
+uniform float4 ct_split_shadows;
+uniform float4 ct_split_highlights;
+uniform float ct_split_balance = 0.0; // -100..100
+uniform float ct_split_amount = 0.0;  // %
+// 3D LUT
+uniform texture3d lut3d;
+uniform float lut3d_size = 2.0;
+uniform float lut3d_enabled = 0.0;
+uniform float ct_lut_amount = 100.0; // %
+// Overall
+uniform float ct_amount = 100.0; // %
+
+sampler_state lutSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	AddressW = Clamp;
+};
+
+float curve_at(float x, int channel)
+{
+	float t = saturate(x) * (curve_size - 1.0);
+	float i0 = floor(t);
+	float i1 = min(i0 + 1.0, curve_size - 1.0);
+	float4 a = curve_lut.Sample(pointSampler, float2((i0 + 0.5) / curve_size, 0.5));
+	float4 b = curve_lut.Sample(pointSampler, float2((i1 + 0.5) / curve_size, 0.5));
+	float4 v = lerp(a, b, t - i0);
+	if (channel == 0)
+		return v.r;
+	if (channel == 1)
+		return v.g;
+	if (channel == 2)
+		return v.b;
+	return v.a;
+}
+
+// Weight of a hue range centred on c (degrees) with half width w.
+float hue_weight(float h, float c, float w)
+{
+	float d = abs(h - c);
+	d = min(d, 360.0 - d);
+	float x = saturate(1.0 - d / w);
+	return x * x * (3.0 - 2.0 * x);
+}
+
+float3 apply_hsl(float3 lab)
+{
+	float C = length(lab.yz);
+	if (C < 1e-5)
+		return lab;
+	float h = atan2(lab.z, lab.y) * 180.0 / PI;
+	h = h < 0.0 ? h + 360.0 : h;
+
+	// Range centres in OkLCh hue degrees.
+	float w0 = hue_weight(h, 29.0, 50.0);
+	float w1 = hue_weight(h, 60.0, 45.0);
+	float w2 = hue_weight(h, 105.0, 50.0);
+	float w3 = hue_weight(h, 145.0, 55.0);
+	float w4 = hue_weight(h, 195.0, 60.0);
+	float w5 = hue_weight(h, 260.0, 60.0);
+	float w6 = hue_weight(h, 305.0, 45.0);
+	float w7 = hue_weight(h, 340.0, 45.0);
+	float sum = w0 + w1 + w2 + w3 + w4 + w5 + w6 + w7;
+	if (sum < 1e-5)
+		return lab;
+
+	float dh = (w0 * ct_hsl_0_h + w1 * ct_hsl_1_h + w2 * ct_hsl_2_h + w3 * ct_hsl_3_h + w4 * ct_hsl_4_h +
+		    w5 * ct_hsl_5_h + w6 * ct_hsl_6_h + w7 * ct_hsl_7_h) / sum;
+	float ds = (w0 * ct_hsl_0_s + w1 * ct_hsl_1_s + w2 * ct_hsl_2_s + w3 * ct_hsl_3_s + w4 * ct_hsl_4_s +
+		    w5 * ct_hsl_5_s + w6 * ct_hsl_6_s + w7 * ct_hsl_7_s) / sum;
+	float dl = (w0 * ct_hsl_0_l + w1 * ct_hsl_1_l + w2 * ct_hsl_2_l + w3 * ct_hsl_3_l + w4 * ct_hsl_4_l +
+		    w5 * ct_hsl_5_l + w6 * ct_hsl_6_l + w7 * ct_hsl_7_l) / sum;
+
+	// Greys have no hue: fade the effect in with chroma.
+	float k = smoothstep(0.0, 0.06, C);
+	float hr = (h + dh * k) * PI / 180.0;
+	float C2 = C * max(1.0 + ds / 100.0 * k, 0.0);
+	float L2 = lab.x + dl / 100.0 * 0.25 * k;
+	return float3(L2, C2 * cos(hr), C2 * sin(hr));
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float4 src = fx_input(v_in.uv);
+	float3 c = src.rgb;
+
+	// Exposure, in linear light.
+	float3 lin = srgb_to_linear(c) * exp2(ct_exposure);
+
+	// White balance and contrast in Oklab (contrast keeps chroma).
+	float3 lab = linear_to_oklab(max(lin, float3(0.0, 0.0, 0.0)));
+	lab.z += ct_temperature / 100.0 * 0.06;
+	lab.y += ct_tint / 100.0 * 0.06;
+	float k = ct_contrast >= 0.0 ? 1.0 + ct_contrast / 100.0 * 2.0 : 1.0 + ct_contrast / 100.0;
+	lab.x = (lab.x - 0.55) * k + 0.55;
+	c = saturate(linear_to_srgb(oklab_to_linear(lab)));
+
+	// Levels.
+	float in_lo = ct_in_black / 100.0;
+	float in_hi = ct_in_white / 100.0;
+	c = saturate((c - in_lo) / max(in_hi - in_lo, 1e-4));
+	c = pow(c, float3(1.0, 1.0, 1.0) / max(ct_gamma, 0.01));
+	c = lerp(float3(ct_out_black, ct_out_black, ct_out_black) / 100.0,
+		 float3(ct_out_white, ct_out_white, ct_out_white) / 100.0, c);
+
+	// Curves: per channel, then master.
+	if (curves_enabled > 0.5) {
+		c = float3(curve_at(c.r, 0), curve_at(c.g, 1), curve_at(c.b, 2));
+		c = float3(curve_at(c.r, 3), curve_at(c.g, 3), curve_at(c.b, 3));
+	}
+
+	// HSL ranges, vibrance and saturation in OkLCh.
+	lab = srgb_to_oklab(c);
+	if (hsl_enabled > 0.5)
+		lab = apply_hsl(lab);
+	float C = length(lab.yz);
+	float vib = ct_vibrance / 100.0;
+	float sat = 1.0 + ct_saturation / 100.0;
+	float boost = sat * (1.0 + vib * (1.0 - smoothstep(0.0, 0.2, C)));
+	lab.yz *= max(boost, 0.0);
+
+	// Split toning: tint shadows and highlights towards two colors.
+	if (ct_split_amount > 0.0) {
+		float balance = ct_split_balance / 100.0 * 0.5;
+		float hw = smoothstep(0.2, 0.8, lab.x - balance);
+		float3 sh = srgb_to_oklab(ct_split_shadows.rgb);
+		float3 hl = srgb_to_oklab(ct_split_highlights.rgb);
+		float2 tint = lerp(sh.yz, hl.yz, hw);
+		lab.yz += tint * ct_split_amount / 100.0 * 0.5;
+	}
+	c = oklab_to_srgb(lab);
+
+	// 3D LUT on sRGB encoded values.
+	if (lut3d_enabled > 0.5) {
+		float n = lut3d_size;
+		float3 coord = saturate(c) * ((n - 1.0) / n) + 0.5 / n;
+		float3 graded = lut3d.Sample(lutSampler, coord).rgb;
+		c = lerp(c, graded, saturate(ct_lut_amount / 100.0));
+	}
+
+	float3 result = lerp(src.rgb, saturate(c), saturate(ct_amount / 100.0));
+	return fx_output(float4(result, src.a), v_in.uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}

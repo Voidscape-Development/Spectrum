@@ -4,17 +4,24 @@
 #include "defines.h"
 #include <util/dstr.h>
 #include "obs-utils.h"
+#include "../gradient/gradient.h"
 
 #define DEFAULT_COLOR 4294967295
 
 #define STROKE_FILL_TYPE_COLOR_LABEL "StrokeFilter.ColorFill"
 #define STROKE_FILL_TYPE_SOURCE_LABEL "StrokeFilter.SourceFill"
 #define STROKE_FILL_TYPE_IMAGE_LABEL "StrokeFilter.ImageFill"
+#define STROKE_FILL_TYPE_GRADIENT_LABEL "StrokeFilter.GradientFill"
+#define STROKE_FILL_TYPE_GRADIENT_ACROSS_LABEL "StrokeFilter.GradientAcrossFill"
+#define STROKE_GRADIENT_PREFIX "stroke_gradient_"
 
 enum stroke_fill_type {
 	STROKE_FILL_TYPE_COLOR = 1,
 	STROKE_FILL_TYPE_SOURCE,
 	STROKE_FILL_TYPE_IMAGE,
+	STROKE_FILL_TYPE_GRADIENT,
+	// The gradient runs across the stroke width (or contour falloff).
+	STROKE_FILL_TYPE_GRADIENT_ACROSS,
 };
 
 #define STROKE_POSITION_OUTER_LABEL "StrokeFilter.StrokePositionOuter"
@@ -43,6 +50,8 @@ struct stroke_filter_data {
 	// Cached render targets for the two sources above.
 	gs_texrender_t *source_texrender;
 	gs_texrender_t *fill_texrender;
+	// Gradient fill.
+	gradient_t gradient;
 
 	bool is_filter;
 	bool is_source;
@@ -66,6 +75,13 @@ struct stroke_filter_data {
 	bool rendering;
 	bool reload;
 	bool rendered;
+	// Result caching for static inputs: keep the last result until the
+	// settings or size change (or every cache_refresh seconds).
+	bool cache;
+	float cache_refresh;
+	float cache_timer;
+	bool cache_valid;
+	uint32_t cache_w, cache_h;
 
 	uint32_t width;
 	uint32_t height;

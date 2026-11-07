@@ -1,7 +1,9 @@
 #include "stroke-filter.h"
 #include "stroke-types.h"
 #include "stroke.h"
+#include "../common/fx-filter.h"
 #include <math.h>
+#include "../common/presets.h"
 
 // Version 1 changed the defaults (see stroke_filter_defaults_v1). Filters and
 // sources saved by earlier versions are loaded as version 0, which keeps the
@@ -64,6 +66,7 @@ static void *stroke_filter_create(obs_data_t *settings, obs_source_t *source)
 
 	source_ref_init(&filter->input_ref);
 	source_ref_init(&filter->fill_ref);
+	gradient_init(&filter->gradient, source, STROKE_GRADIENT_PREFIX);
 
 	filter->context = source;
 	filter->input_texture_generated = false;
@@ -112,6 +115,7 @@ static void stroke_filter_destroy(void *data)
 
 	source_ref_free(&filter->input_ref);
 	source_ref_free(&filter->fill_ref);
+	gradient_free(&filter->gradient);
 	bfree(filter);
 }
 
@@ -193,6 +197,10 @@ static void stroke_filter_update(void *data, obs_data_t *settings)
 	filter->fill = obs_data_get_bool(settings, "fill");
 	// Resolved on the graphics thread, in video_tick.
 	source_ref_set_name(&filter->fill_ref, obs_data_get_string(settings, "stroke_fill_source"));
+	gradient_update(&filter->gradient, settings);
+	filter->cache = obs_data_get_bool(settings, "cache_result");
+	filter->cache_refresh = (float)obs_data_get_double(settings, "cache_refresh");
+	filter->cache_valid = false;
 	if (filter->is_source) {
 		source_ref_set_name(&filter->input_ref, obs_data_get_string(settings, "stroke_source"));
 	}
@@ -203,7 +211,7 @@ static void stroke_filter_update(void *data, obs_data_t *settings)
 	}
 }
 
-static void stroke_filter_video_render(void *data, gs_effect_t *effect)
+static void stroke_filter_render_impl(void *data, gs_effect_t *effect)
 {
 	UNUSED_PARAMETER(effect);
 	stroke_filter_data_t *filter = data;
@@ -250,7 +258,33 @@ static void stroke_filter_video_render(void *data, gs_effect_t *effect)
 	// 3. Draw result (filter->output_texrender) to source
 	render_cropped_output(filter);
 	filter->rendered = true;
+	filter->cache_valid = true;
+	filter->cache_w = filter->output_width;
+	filter->cache_h = filter->output_height;
 	filter->rendering = false;
+}
+
+// During a Move Transition between two filters of this kind, render with
+// their settings interpolated, then restore this filter's own.
+static void stroke_filter_video_render(void *data, gs_effect_t *effect)
+{
+	stroke_filter_data_t *filter = data;
+	obs_source_t *to = NULL;
+	const float t = filter->is_filter ? fx_move_target(filter->context, &to) : 0.0f;
+	if (!to) {
+		stroke_filter_render_impl(data, effect);
+		return;
+	}
+	obs_data_t *own = obs_source_get_settings(filter->context);
+	obs_data_t *other = obs_source_get_settings(to);
+	obs_data_t *mix = fx_lerp_settings(own, other, t);
+	stroke_filter_update(filter, mix);
+	filter->rendered = false;
+	stroke_filter_render_impl(data, effect);
+	stroke_filter_update(filter, own);
+	obs_data_release(mix);
+	obs_data_release(other);
+	obs_data_release(own);
 }
 
 static obs_properties_t *properties(void *data, bool is_source)
@@ -352,6 +386,10 @@ static obs_properties_t *properties(void *data, bool is_source)
 				  STROKE_FILL_TYPE_COLOR);
 	obs_property_list_add_int(stroke_fill_method_list, obs_module_text(STROKE_FILL_TYPE_SOURCE_LABEL),
 				  STROKE_FILL_TYPE_SOURCE);
+	obs_property_list_add_int(stroke_fill_method_list, obs_module_text(STROKE_FILL_TYPE_GRADIENT_LABEL),
+				  STROKE_FILL_TYPE_GRADIENT);
+	obs_property_list_add_int(stroke_fill_method_list, obs_module_text(STROKE_FILL_TYPE_GRADIENT_ACROSS_LABEL),
+				  STROKE_FILL_TYPE_GRADIENT_ACROSS);
 	//obs_property_list_add_int(
 	//	stroke_fill_method_list,
 	//	obs_module_text(STROKE_FILL_TYPE_IMAGE_LABEL),
@@ -371,6 +409,14 @@ static obs_properties_t *properties(void *data, bool is_source)
 	obs_enum_scenes(stroke_add_source_to_list, stroke_fill_source_source);
 	obs_property_list_insert_string(stroke_fill_source_source, 0, "None", "");
 
+	gradient_properties(props, STROKE_GRADIENT_PREFIX, filter ? &filter->gradient : NULL);
+
+	obs_property_t *cache_p = obs_properties_add_bool(props, "cache_result", obs_module_text("Cache.Result"));
+	obs_property_set_long_description(cache_p, obs_module_text("Cache.Result.Description"));
+	obs_property_t *refresh_p = obs_properties_add_float_slider(props, "cache_refresh",
+								    obs_module_text("Cache.Refresh"), 0.0, 60.0, 0.1);
+	obs_property_float_set_suffix(refresh_p, "s");
+	spectrum_presets_properties(props, data ? ((stroke_filter_data_t *)data)->context : NULL);
 	return props;
 }
 
@@ -399,6 +445,7 @@ static void stroke_filter_video_tick(void *data, float seconds)
 	stroke_filter_data_t *filter = data;
 
 	source_ref_tick(&filter->fill_ref, seconds);
+	gradient_tick(&filter->gradient, seconds);
 	if (filter->is_source) {
 		source_ref_tick(&filter->input_ref, seconds);
 	}
@@ -444,7 +491,18 @@ static void stroke_filter_video_tick(void *data, float seconds)
 		filter->output_width = base_width + filter->pad_l + filter->pad_r;
 		filter->output_height = base_height + filter->pad_t + filter->pad_b;
 	}
-	filter->rendered = false;
+	// With caching, keep the last result while it is still valid.
+	bool keep = filter->cache && filter->cache_valid && filter->output_width == filter->cache_w &&
+		    filter->output_height == filter->cache_h && !gradient_is_animated(&filter->gradient);
+	if (keep && filter->cache_refresh > 0.0f) {
+		filter->cache_timer += seconds;
+		if (filter->cache_timer >= filter->cache_refresh) {
+			filter->cache_timer = 0.0f;
+			keep = false;
+		}
+	}
+	if (!keep)
+		filter->rendered = false;
 }
 
 static void stroke_filter_defaults(obs_data_t *settings)
@@ -464,6 +522,7 @@ static void stroke_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "jump_flood_threshold_inner", 0.0);
 	obs_data_set_default_double(settings, "contour_falloff_start", 0.0);
 	obs_data_set_default_double(settings, "contour_falloff_end", 2000.0);
+	gradient_defaults(settings, STROKE_GRADIENT_PREFIX);
 }
 
 // Defaults for filters/sources created by this version: pad automatically
@@ -485,6 +544,13 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 {
 	UNUSED_PARAMETER(p);
 	enum stroke_fill_type fill_type = (enum stroke_fill_type)obs_data_get_int(settings, "stroke_fill_type");
+	gradient_set_visible(props, STROKE_GRADIENT_PREFIX,
+			     fill_type == STROKE_FILL_TYPE_GRADIENT || fill_type == STROKE_FILL_TYPE_GRADIENT_ACROSS);
+	if (fill_type == STROKE_FILL_TYPE_GRADIENT) {
+		gradient_refresh_visibility(props, STROKE_GRADIENT_PREFIX, settings);
+	} else if (fill_type == STROKE_FILL_TYPE_GRADIENT_ACROSS) {
+		gradient_hide_geometry(props, STROKE_GRADIENT_PREFIX);
+	}
 	switch (fill_type) {
 	case STROKE_FILL_TYPE_COLOR:
 		stroke_setting_visibility("stroke_fill_color", true, props);
@@ -500,6 +566,12 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 		stroke_setting_visibility("stroke_fill_color", false, props);
 		stroke_setting_visibility("stroke_fill_source", false, props);
 		stroke_setting_visibility("stroke_fill_image", true, props);
+		break;
+	case STROKE_FILL_TYPE_GRADIENT:
+	case STROKE_FILL_TYPE_GRADIENT_ACROSS:
+		stroke_setting_visibility("stroke_fill_color", false, props);
+		stroke_setting_visibility("stroke_fill_source", false, props);
+		stroke_setting_visibility("stroke_fill_image", false, props);
 		break;
 	}
 	return true;

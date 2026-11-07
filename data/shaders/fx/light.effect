@@ -1,0 +1,228 @@
+// Spectrum Light: bloom, light rays, lens flare and a point light with bump
+// from the source's alpha. Intermediate passes work in linear light, in
+// float textures.
+#include "fx-common.effect"
+
+// Pass inputs.
+uniform texture2d pass_tex;       // the texture a pass reads
+uniform float2 pass_texel;        // 1 / pass_tex size
+uniform texture2d bloom_tex;      // final: blurred bright pass
+uniform texture2d bright_tex;     // final: bright pass (for rays)
+uniform texture2d add_tex;        // up pass: the down level of the same size
+uniform float bloom_scale = 1.0;  // final: normalisation of the summed levels
+
+// Bloom
+uniform float li_bloom = 0.0;          // intensity, %
+uniform float li_threshold = 70.0;     // %
+uniform float li_knee = 20.0;          // %
+uniform float4 li_bloom_tint;
+// Rays
+uniform float li_rays = 0.0;           // intensity, %
+uniform float li_rays_x = 50.0;        // %
+uniform float li_rays_y = 0.0;         // %
+uniform float li_rays_length = 50.0;   // %
+uniform float li_rays_decay = 92.0;    // %
+// Flare
+uniform float li_flare = 0.0;          // intensity, %
+uniform float li_flare_x = 25.0;       // %
+uniform float li_flare_y = 25.0;       // %
+uniform float li_flare_size = 100.0;   // %
+uniform float li_flare_streaks = 6.0;
+uniform float4 li_flare_color;
+// Point light
+uniform float li_light = 0.0;          // intensity, %
+uniform float li_light_x = 30.0;       // %
+uniform float li_light_y = 30.0;       // %
+uniform float li_light_height = 150.0; // px
+uniform float li_light_radius = 60.0;  // % of the larger side
+uniform float li_ambient = 40.0;       // %
+uniform float li_bump = 6.0;           // px
+uniform float li_bump_depth = 100.0;   // %
+uniform float4 li_light_color;
+
+/* Bright pass: linear light above a soft threshold. ------------------- */
+
+float4 PSBright(VertData v_in) : TARGET
+{
+	float4 c = image.Sample(textureSampler, v_in.uv); // linear (sRGB view)
+	float3 lin = c.rgb * c.a;
+	float lum = dot(lin, float3(0.2126, 0.7152, 0.0722));
+	float thr = srgb_to_linear_channel(li_threshold / 100.0);
+	float knee = max(thr * li_knee / 100.0, 1e-4);
+	float soft = clamp(lum - thr + knee, 0.0, 2.0 * knee);
+	soft = soft * soft / (4.0 * knee + 1e-5);
+	float contrib = max(soft, lum - thr) / max(lum, 1e-5);
+	return float4(lin * contrib, 1.0);
+}
+
+/* Dual filter (Kawase) down and up sampling. -------------------------- */
+
+float4 PSDown(VertData v_in) : TARGET
+{
+	float2 h = pass_texel * 0.5;
+	float4 sum = pass_tex.Sample(textureSampler, v_in.uv) * 4.0;
+	sum += pass_tex.Sample(textureSampler, v_in.uv - h);
+	sum += pass_tex.Sample(textureSampler, v_in.uv + h);
+	sum += pass_tex.Sample(textureSampler, v_in.uv + float2(h.x, -h.y));
+	sum += pass_tex.Sample(textureSampler, v_in.uv - float2(h.x, -h.y));
+	return sum / 8.0;
+}
+
+float4 PSUp(VertData v_in) : TARGET
+{
+	float2 h = pass_texel * 0.5;
+	float4 sum = pass_tex.Sample(textureSampler, v_in.uv + float2(-h.x * 2.0, 0.0));
+	sum += pass_tex.Sample(textureSampler, v_in.uv + float2(-h.x, h.y)) * 2.0;
+	sum += pass_tex.Sample(textureSampler, v_in.uv + float2(0.0, h.y * 2.0));
+	sum += pass_tex.Sample(textureSampler, v_in.uv + float2(h.x, h.y)) * 2.0;
+	sum += pass_tex.Sample(textureSampler, v_in.uv + float2(h.x * 2.0, 0.0));
+	sum += pass_tex.Sample(textureSampler, v_in.uv + float2(h.x, -h.y)) * 2.0;
+	sum += pass_tex.Sample(textureSampler, v_in.uv + float2(0.0, -h.y * 2.0));
+	sum += pass_tex.Sample(textureSampler, v_in.uv + float2(-h.x, -h.y)) * 2.0;
+	// Add the level of this size back in: a strong core and a wide halo.
+	return sum / 12.0 + add_tex.Sample(textureSampler, v_in.uv);
+}
+
+/* Final composite. ----------------------------------------------------- */
+
+float height_at(float2 uv)
+{
+	float2 px = 1.0 / uv_size;
+	float r = max(li_bump, 0.5);
+	float sum = image.Sample(borderSampler, uv).a;
+	for (int k = 0; k < 8; k++) {
+		float a = float(k) * (TAU / 8.0);
+		sum += image.Sample(borderSampler, uv + float2(cos(a), sin(a)) * r * px).a;
+	}
+	return sum / 9.0;
+}
+
+float3 point_light(float2 uv, float3 lin)
+{
+	float2 pix = uv * uv_size;
+	float2 px = 1.0 / uv_size;
+	float e = max(li_bump * 0.5, 1.0);
+	float hx = height_at(uv + float2(e, 0.0) * px) - height_at(uv - float2(e, 0.0) * px);
+	float hy = height_at(uv + float2(0.0, e) * px) - height_at(uv - float2(0.0, e) * px);
+	float depth = li_bump_depth / 100.0 * max(li_bump, 0.5) / e;
+	float3 n = normalize(float3(-hx * depth, -hy * depth, 1.0));
+
+	float2 lp = float2(li_light_x, li_light_y) / 100.0 * uv_size;
+	float3 l = float3(lp - pix, max(li_light_height, 1.0));
+	float dist = length(l);
+	l /= dist;
+	float radius = max(li_light_radius / 100.0 * max(uv_size.x, uv_size.y), 1.0);
+	float atten = 1.0 / (1.0 + (dist / radius) * (dist / radius));
+	float diffuse = saturate(dot(n, l)) * atten;
+	float3 light = srgb_to_linear(li_light_color.rgb) * diffuse * li_light / 100.0 * 2.0;
+	float ambient = li_ambient / 100.0;
+	return lin * (ambient + light);
+}
+
+float3 lens_flare(float2 uv)
+{
+	float aspect = uv_size.x / uv_size.y;
+	float2 pos = float2(li_flare_x, li_flare_y) / 100.0;
+	float size = max(li_flare_size / 100.0, 0.01);
+	float2 d = (uv - pos) * float2(aspect, 1.0);
+	float r = length(d);
+
+	float glow = exp(-r / (0.06 * size)) * 1.2 + exp(-r / (0.25 * size)) * 0.25;
+	float ang = atan2(d.y, d.x);
+	float streaks = pow(abs(cos(ang * max(li_flare_streaks, 1.0) * 0.5)), 60.0) * exp(-r / (0.35 * size)) * 0.6;
+	float ring = exp(-abs(r - 0.32 * size) / (0.012 * size)) * 0.12;
+
+	// Ghosts along the line through the centre of the frame.
+	float3 ghosts = float3(0.0, 0.0, 0.0);
+	float2 axis = float2(0.5, 0.5) - pos;
+	for (int i = 0; i < 5; i++) {
+		float k = 0.55 + float(i) * 0.38;
+		float2 gp = pos + axis * k * 2.0;
+		float gr = (0.03 + 0.025 * float(i % 3)) * size;
+		float g = length((uv - gp) * float2(aspect, 1.0));
+		float disc = smoothstep(gr, gr * 0.6, g) * 0.12;
+		float hue = float(i) * 0.21;
+		ghosts += disc * (0.5 + 0.5 * cos(TAU * (hue + float3(0.0, 0.33, 0.67))));
+	}
+
+	float3 tint = srgb_to_linear(li_flare_color.rgb);
+	return (tint * (glow + streaks + ring) + ghosts * tint) * li_flare / 100.0;
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float4 c = image.Sample(textureSampler, v_in.uv); // linear, straight alpha
+	float3 lin = c.rgb;
+	float alpha = c.a;
+
+	if (li_light > 0.0)
+		lin = point_light(v_in.uv, lin);
+
+	// Additive light, premultiplied: it can light up transparent areas.
+	float3 add = float3(0.0, 0.0, 0.0);
+	if (li_bloom > 0.0) {
+		float3 b = bloom_tex.Sample(textureSampler, v_in.uv).rgb * bloom_scale;
+		add += b * srgb_to_linear(li_bloom_tint.rgb) * li_bloom / 100.0 * 2.0;
+	}
+	if (li_rays > 0.0) {
+		float2 center = float2(li_rays_x, li_rays_y) / 100.0;
+		float2 delta = (v_in.uv - center) * (li_rays_length / 100.0) / 48.0;
+		float2 p = v_in.uv;
+		float w = 1.0;
+		float3 sum = float3(0.0, 0.0, 0.0);
+		float decay = saturate(li_rays_decay / 100.0);
+		for (int i = 0; i < 48; i++) {
+			p -= delta;
+			sum += bright_tex.Sample(textureSampler, p).rgb * w;
+			w *= decay;
+		}
+		add += sum / 48.0 * li_rays / 100.0 * 4.0;
+	}
+	if (li_flare > 0.0)
+		add += lens_flare(v_in.uv);
+
+	float3 premul = lin * alpha + add;
+	float add_a = saturate(max(add.r, max(add.g, add.b)));
+	float out_a = alpha + add_a * (1.0 - alpha);
+	float3 rgb = out_a > 0.0 ? premul / out_a : float3(0.0, 0.0, 0.0);
+
+	// Dither and output through the shared path (encoded units).
+	float4 enc = float4(linear_to_srgb(max(rgb, float3(0.0, 0.0, 0.0))), out_a);
+	return fx_output(enc, v_in.uv);
+}
+
+technique Bright
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSBright(v_in);
+	}
+}
+
+technique Down
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDown(v_in);
+	}
+}
+
+technique Up
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSUp(v_in);
+	}
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}

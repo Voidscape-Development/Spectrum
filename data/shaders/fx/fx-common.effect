@@ -1,0 +1,256 @@
+// Shared code for Spectrum's single-pass filters and sources (see
+// src/common/fx-filter.c). Every effect including this works in sRGB
+// encoded, straight alpha color: fx_input() returns the filter input that
+// way, and fx_output() dithers the result to the target's bit depth and
+// converts it back to what OBS expects.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 uv_size;          // px
+uniform float linear_input = 0.0; // OBS hands us linear color (sRGB framebuffer)
+uniform float dither_step = 0.0;  // one output step, encoded units; 0 = none
+uniform float time = 0.0;         // seconds
+uniform float pad_px = 0.0;       // margin drawn around the source, px
+
+// Gradient lookup (gradient_sample(), bound by gradient_bind_lut()).
+#include "../gradient/gradient-sample.effect"
+
+sampler_state textureSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+sampler_state borderSampler {
+	Filter      = Linear;
+	AddressU    = Border;
+	AddressV    = Border;
+	BorderColor = 00000000;
+};
+
+sampler_state pointSampler {
+	Filter   = Point;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv = v_in.uv;
+	return vert_out;
+}
+
+#define PI 3.14159265358979
+#define TAU 6.28318530717959
+
+/* Color ---------------------------------------------------------------- */
+
+float srgb_to_linear_channel(float u)
+{
+	return (u <= 0.04045) ? (u / 12.92) : pow((u + 0.055) / 1.055, 2.4);
+}
+
+float3 srgb_to_linear(float3 v)
+{
+	return float3(srgb_to_linear_channel(v.r), srgb_to_linear_channel(v.g), srgb_to_linear_channel(v.b));
+}
+
+float linear_to_srgb_channel(float u)
+{
+	return (u <= 0.0031308) ? (12.92 * u) : ((1.055 * pow(max(u, 0.0), 1.0 / 2.4)) - 0.055);
+}
+
+float3 linear_to_srgb(float3 v)
+{
+	return float3(linear_to_srgb_channel(v.r), linear_to_srgb_channel(v.g), linear_to_srgb_channel(v.b));
+}
+
+float3 linear_to_oklab(float3 c)
+{
+	float l = 0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b;
+	float m = 0.2119034982 * c.r + 0.6806995451 * c.g + 0.1073969566 * c.b;
+	float s = 0.0883024619 * c.r + 0.2817188376 * c.g + 0.6299787005 * c.b;
+	float3 lms = pow(max(float3(l, m, s), float3(0.0, 0.0, 0.0)), float3(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0));
+	return float3(0.2104542553 * lms.x + 0.7936177850 * lms.y - 0.0040720468 * lms.z,
+		      1.9779984951 * lms.x - 2.4285922050 * lms.y + 0.4505937099 * lms.z,
+		      0.0259040371 * lms.x + 0.7827717662 * lms.y - 0.8086757660 * lms.z);
+}
+
+float3 oklab_to_linear(float3 c)
+{
+	float l_ = c.x + 0.3963377774 * c.y + 0.2158037573 * c.z;
+	float m_ = c.x - 0.1055613458 * c.y - 0.0638541728 * c.z;
+	float s_ = c.x - 0.0894841775 * c.y - 1.2914855480 * c.z;
+	float l = l_ * l_ * l_;
+	float m = m_ * m_ * m_;
+	float s = s_ * s_ * s_;
+	return float3(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+		      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+		      -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+}
+
+// Encoded sRGB <-> Oklab.
+float3 srgb_to_oklab(float3 enc)
+{
+	return linear_to_oklab(srgb_to_linear(saturate(enc)));
+}
+
+float3 oklab_to_srgb(float3 lab)
+{
+	return saturate(linear_to_srgb(saturate(oklab_to_linear(lab))));
+}
+
+// Rec. 709 luma of an encoded color.
+float luma(float3 enc)
+{
+	return dot(enc, float3(0.2126, 0.7152, 0.0722));
+}
+
+float3 rgb_to_hsv(float3 c)
+{
+	float4 K = float4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+	float4 p = c.g < c.b ? float4(c.bg, K.wz) : float4(c.gb, K.xy);
+	float4 q = c.r < p.x ? float4(p.xyw, c.r) : float4(c.r, p.yzx);
+	float d = q.x - min(q.w, q.y);
+	float e = 1.0e-10;
+	return float3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+float3 hsv_to_rgb(float3 c)
+{
+	float3 p = abs(frac(c.xxx + float3(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+	return c.z * lerp(float3(1.0, 1.0, 1.0), saturate(p - 1.0), c.y);
+}
+
+/* Noise ---------------------------------------------------------------- */
+
+float ign(float2 p)
+{
+	return frac(52.9829189 * frac(0.06711056 * p.x + 0.00583715 * p.y));
+}
+
+// Triangular noise in [-1, 1].
+float tpdf(float2 p)
+{
+	return ign(p) + ign(p * 1.37 + float2(47.3, 13.9)) - 1.0;
+}
+
+float hash12(float2 p)
+{
+	float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return frac((p3.x + p3.y) * p3.z);
+}
+
+float2 hash22(float2 p)
+{
+	float3 p3 = frac(float3(p.x, p.y, p.x) * float3(0.1031, 0.1030, 0.0973));
+	p3 += dot(p3, p3.yzx + 33.33);
+	return frac((p3.xx + p3.yz) * p3.zy);
+}
+
+float value_noise(float2 p)
+{
+	float2 i = floor(p);
+	float2 f = frac(p);
+	float2 u = f * f * (3.0 - 2.0 * f);
+	float a = hash12(i);
+	float b = hash12(i + float2(1.0, 0.0));
+	float c = hash12(i + float2(0.0, 1.0));
+	float d = hash12(i + float2(1.0, 1.0));
+	return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+
+/* Input / output ------------------------------------------------------- */
+
+float4 encode_input(float4 c)
+{
+	return linear_input > 0.5 ? float4(linear_to_srgb(c.rgb), c.a) : c;
+}
+
+// Output uv (which covers the margin, if any) to input uv.
+float2 fx_input_uv(float2 uv)
+{
+	if (pad_px <= 0.0)
+		return uv;
+	return (uv * uv_size - pad_px) / (uv_size - 2.0 * pad_px);
+}
+
+// The filter input at (output) uv, sRGB encoded, straight alpha. Clamped
+// at the edges, or transparent outside the source when drawing a margin.
+float4 fx_input(float2 uv)
+{
+	if (pad_px > 0.0)
+		return encode_input(image.Sample(borderSampler, fx_input_uv(uv)));
+	return encode_input(image.Sample(textureSampler, uv));
+}
+
+// Transparent outside the source.
+float4 fx_input_border(float2 uv)
+{
+	return encode_input(image.Sample(borderSampler, fx_input_uv(uv)));
+}
+
+// Dithers an encoded, straight alpha color to the output bit depth and
+// converts it to what OBS expects.
+float4 fx_output(float4 c, float2 uv)
+{
+	if (dither_step > 0.0) {
+		float2 p = floor(uv * uv_size);
+		c.r += tpdf(p) * dither_step;
+		c.g += tpdf(p + float2(19.0, 7.0)) * dither_step;
+		c.b += tpdf(p + float2(3.0, 23.0)) * dither_step;
+		c.a += tpdf(p + float2(29.0, 11.0)) * dither_step;
+	}
+	c = saturate(c);
+	return linear_input > 0.5 ? float4(srgb_to_linear(c.rgb), c.a) : c;
+}
+
+/* Blend modes (encoded, b over a) ------------------------------------- */
+
+#define BLEND_NORMAL 1
+#define BLEND_MULTIPLY 2
+#define BLEND_SCREEN 3
+#define BLEND_OVERLAY 4
+#define BLEND_SOFT_LIGHT 5
+#define BLEND_ADD 6
+#define BLEND_COLOR 7
+#define BLEND_LUMINOSITY 8
+#define BLEND_HUE 9
+
+float3 blend_rgb(float3 a, float3 b, int mode)
+{
+	if (mode == BLEND_MULTIPLY)
+		return a * b;
+	if (mode == BLEND_SCREEN)
+		return 1.0 - (1.0 - a) * (1.0 - b);
+	if (mode == BLEND_OVERLAY)
+		return lerp(2.0 * a * b, 1.0 - 2.0 * (1.0 - a) * (1.0 - b), step(0.5, a));
+	if (mode == BLEND_SOFT_LIGHT)
+		return lerp(a - (1.0 - 2.0 * b) * a * (1.0 - a), a + (2.0 * b - 1.0) * (sqrt(a) - a), step(0.5, b));
+	if (mode == BLEND_ADD)
+		return saturate(a + b);
+	if (mode == BLEND_COLOR || mode == BLEND_LUMINOSITY || mode == BLEND_HUE) {
+		float3 la = srgb_to_oklab(a);
+		float3 lb = srgb_to_oklab(b);
+		float3 r;
+		if (mode == BLEND_COLOR) {
+			r = float3(la.x, lb.yz);
+		} else if (mode == BLEND_LUMINOSITY) {
+			r = float3(lb.x, la.yz);
+		} else {
+			float ca = length(la.yz);
+			float cb = length(lb.yz);
+			r = float3(la.x, cb > 1e-5 ? lb.yz * (ca / cb) : la.yz);
+		}
+		return oklab_to_srgb(r);
+	}
+	return b;
+}

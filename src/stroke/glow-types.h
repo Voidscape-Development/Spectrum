@@ -5,6 +5,7 @@
 #include "defines.h"
 #include <util/dstr.h>
 #include "obs-utils.h"
+#include "../gradient/gradient.h"
 
 // Default glow color: white in ABGR
 #define DEFAULT_COLOR_GLOW 0xFFFFFFFF
@@ -14,11 +15,17 @@
 #define GLOW_FILL_TYPE_COLOR_LABEL "StrokeFilter.ColorFill"
 #define GLOW_FILL_TYPE_SOURCE_LABEL "StrokeFilter.SourceFill"
 #define GLOW_FILL_TYPE_IMAGE_LABEL "StrokeFilter.ImageFill"
+#define GLOW_FILL_TYPE_GRADIENT_LABEL "StrokeFilter.GradientFill"
+#define GLOW_FILL_TYPE_GRADIENT_STRENGTH_LABEL "GlowFilter.GradientStrengthFill"
+#define GLOW_GRADIENT_PREFIX "glow_gradient_"
 
 enum glow_fill_type {
 	GLOW_FILL_TYPE_COLOR = 1,
 	GLOW_FILL_TYPE_SOURCE,
 	GLOW_FILL_TYPE_IMAGE,
+	GLOW_FILL_TYPE_GRADIENT,
+	// The gradient colors the glow by its strength.
+	GLOW_FILL_TYPE_GRADIENT_STRENGTH,
 };
 
 #define GLOW_POSITION_OUTER_LABEL "GlowFilter.PositionOuter"
@@ -58,6 +65,8 @@ struct glow_filter_data {
 	// Cached render targets for the two sources above.
 	gs_texrender_t *source_texrender;
 	gs_texrender_t *fill_texrender;
+	// Gradient fill.
+	gradient_t gradient;
 
 	bool is_filter;
 	bool is_source;
@@ -77,6 +86,13 @@ struct glow_filter_data {
 	bool rendering;
 	bool reload;
 	bool rendered;
+	// Result caching for static inputs: keep the last result until the
+	// settings or size change (or every cache_refresh seconds).
+	bool cache;
+	float cache_refresh;
+	float cache_timer;
+	bool cache_valid;
+	uint32_t cache_w, cache_h;
 
 	uint32_t width;
 	uint32_t height;

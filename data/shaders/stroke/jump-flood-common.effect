@@ -21,6 +21,9 @@ uniform float offset;
 uniform float stroke_offset;
 uniform float stroke_extent;
 uniform float4 stroke_fill_color;
+// Gradient fill across the stroke (or contour falloff) instead of a color.
+uniform float fill_gradient = 0.0;
+#include "../gradient/gradient-sample.effect"
 
 uniform float contour_offset;
 uniform float contour_spacing;
@@ -313,4 +316,23 @@ technique DrawJumpFloodStep
 		vertex_shader = mainTransform(v_in);
 		pixel_shader = drawJumpFloodImage(v_in);
 	}
+}
+
+// The fill of a stroke at `depth` px from the edge (outwards for outer
+// strokes, inwards for inner ones): the gradient across the stroke width when
+// fill_gradient is set, `fill` otherwise.
+float4 stroke_fill_at(float4 fill, float depth)
+{
+	if (fill_gradient < 0.5)
+		return fill;
+	float start = max(stroke_offset, 0.0);
+	return gradient_sample(saturate((depth - start) / max(stroke_extent - start, 1e-3)));
+}
+
+// Same for contours, across the falloff range.
+float4 contour_fill_at(float4 fill, float d)
+{
+	if (fill_gradient < 0.5)
+		return fill;
+	return gradient_sample(saturate((d - contour_falloff_start) / max(contour_falloff_end - contour_falloff_start, 1.0)));
 }

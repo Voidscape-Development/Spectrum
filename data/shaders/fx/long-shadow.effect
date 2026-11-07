@@ -1,0 +1,84 @@
+// Spectrum Long Shadow: a flat long shadow or a 3D extrusion of the source
+// along a direction. Each pixel searches back towards the source for the
+// nearest opaque sample, which gives an exact depth along the shadow.
+#include "fx-common.effect"
+
+uniform float ls_angle = 45.0;   // degrees, direction the shadow goes
+uniform float ls_length = 100.0; // px
+uniform int ls_fill;             // 1 color, 2 gradient along the length, 3 source colors
+uniform float4 ls_color;
+uniform float ls_shade = 50.0;   // source colors: darkening at the far end, %
+uniform float ls_fade = 100.0;   // fade to transparent at the end, %
+uniform float ls_threshold = 50.0; // alpha, %
+uniform bool ls_behind_only;     // draw only the shadow, not the source
+uniform float ls_opacity = 100.0;
+
+#define MAX_STEPS 256
+
+float4 over(float4 a, float4 b)
+{
+	float out_a = a.a + b.a * (1.0 - a.a);
+	float3 premul = a.rgb * a.a + b.rgb * b.a * (1.0 - a.a);
+	return float4(out_a > 0.0 ? premul / out_a : float3(0.0, 0.0, 0.0), out_a);
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float4 src = fx_input(v_in.uv);
+	float rad = ls_angle * PI / 180.0;
+	float2 dir_px = float2(cos(rad), sin(rad));
+	float2 px_to_uv = 1.0 / uv_size;
+
+	float len = max(ls_length, 0.0);
+	float steps = clamp(ceil(len), 1.0, float(MAX_STEPS));
+	float step_px = len / steps;
+	float threshold = saturate(ls_threshold / 100.0);
+
+	// Search back towards the light for the nearest part of the source.
+	float depth = -1.0;
+	float4 hit = float4(0.0, 0.0, 0.0, 0.0);
+	for (int i = 1; i <= MAX_STEPS; i++) {
+		if (float(i) > steps)
+			break;
+		float k = float(i) * step_px;
+		float4 s = fx_input_border(v_in.uv - dir_px * k * px_to_uv);
+		if (s.a >= threshold) {
+			// Refine between the last miss and this hit for smooth edges.
+			float prev = fx_input_border(v_in.uv - dir_px * (k - step_px) * px_to_uv).a;
+			float f = saturate((threshold - prev) / max(s.a - prev, 1e-4));
+			depth = k - step_px + f * step_px;
+			hit = s;
+			break;
+		}
+	}
+
+	float4 shadow = float4(0.0, 0.0, 0.0, 0.0);
+	if (depth >= 0.0) {
+		float t = len > 0.0 ? saturate(depth / len) : 0.0;
+		float4 c;
+		if (ls_fill == 2) {
+			c = gradient_sample(t);
+		} else if (ls_fill == 3) {
+			c = float4(hit.rgb * (1.0 - t * saturate(ls_shade / 100.0)), 1.0);
+		} else {
+			c = ls_color;
+		}
+		float fade = 1.0 - t * saturate(ls_fade / 100.0);
+		// Soften the far end over one step so it doesn't alias.
+		float end_aa = saturate((len - depth) / max(step_px, 1.0));
+		shadow = float4(c.rgb, c.a * fade * end_aa);
+	}
+	shadow.a *= saturate(ls_opacity / 100.0);
+
+	float4 result = ls_behind_only ? float4(shadow.rgb, shadow.a * (1.0 - src.a)) : over(src, shadow);
+	return fx_output(result, v_in.uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}

@@ -147,4 +147,37 @@ target_sources(
     src/masks/utils.h
 )
 
+# Gradient
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/gradient/gradient.c
+    src/gradient/gradient.h
+    src/gradient/gradient-editor.cpp
+    src/gradient/gradient-editor.hpp
+    src/gradient/gradient-source.c
+)
+
+# Single-pass effects
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/common/fx-filter.c
+    src/common/presets.c
+    src/common/presets.h
+    src/common/position-picker.cpp
+    src/common/position-picker.hpp
+    src/common/fx-filter.h
+    src/fx/gradient-map.c
+    src/fx/long-shadow.c
+    src/fx/bevel.c
+    src/fx/color-tools.c
+    src/fx/distort.c
+    src/fx/stylize.c
+    src/fx/light.c
+    src/fx/shape-source.c
+    src/fx/noise-source.c
+    src/animate/animate-filter.c
+)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

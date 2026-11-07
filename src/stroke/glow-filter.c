@@ -5,6 +5,8 @@
 #include "glow.h"
 
 #include <math.h>
+#include "../common/presets.h"
+#include "../common/fx-filter.h"
 
 // Version 1 changed the defaults (see glow_filter_defaults_v1). Filters and
 // sources saved by earlier versions are loaded as version 0, which keeps the
@@ -97,6 +99,7 @@ static glow_filter_data_t *filter_create(obs_source_t *source)
 
 	source_ref_init(&filter->input_ref);
 	source_ref_init(&filter->fill_ref);
+	gradient_init(&filter->gradient, source, GLOW_GRADIENT_PREFIX);
 	filter->context = source;
 	filter->input_texture_generated = false;
 	filter->alpha_blur_data = bzalloc(sizeof(alpha_blur_data_t));
@@ -152,6 +155,7 @@ static void glow_filter_destroy(void *data)
 
 	source_ref_free(&filter->input_ref);
 	source_ref_free(&filter->fill_ref);
+	gradient_free(&filter->gradient);
 	bfree(filter->alpha_blur_data);
 	bfree(filter);
 }
@@ -240,6 +244,10 @@ static void glow_filter_update(void *data, obs_data_t *settings)
 	}
 
 	source_ref_set_name(&filter->fill_ref, obs_data_get_string(settings, "glow_fill_source"));
+	gradient_update(&filter->gradient, settings);
+	filter->cache = obs_data_get_bool(settings, "cache_result");
+	filter->cache_refresh = (float)obs_data_get_double(settings, "cache_refresh");
+	filter->cache_valid = false;
 
 	if (filter->reload) {
 		filter->reload = false;
@@ -247,7 +255,7 @@ static void glow_filter_update(void *data, obs_data_t *settings)
 	}
 }
 
-static void glow_filter_video_render(void *data, gs_effect_t *effect)
+static void glow_filter_render_impl(void *data, gs_effect_t *effect)
 {
 	UNUSED_PARAMETER(effect);
 	glow_filter_data_t *filter = data;
@@ -302,7 +310,33 @@ static void glow_filter_video_render(void *data, gs_effect_t *effect)
 	glow_render_cropped_output(filter);
 
 	filter->rendered = true;
+	filter->cache_valid = true;
+	filter->cache_w = filter->output_width;
+	filter->cache_h = filter->output_height;
 	filter->rendering = false;
+}
+
+// During a Move Transition between two filters of this kind, render with
+// their settings interpolated, then restore this filter's own.
+static void glow_filter_video_render(void *data, gs_effect_t *effect)
+{
+	glow_filter_data_t *filter = data;
+	obs_source_t *to = NULL;
+	const float t = filter->is_filter ? fx_move_target(filter->context, &to) : 0.0f;
+	if (!to) {
+		glow_filter_render_impl(data, effect);
+		return;
+	}
+	obs_data_t *own = obs_source_get_settings(filter->context);
+	obs_data_t *other = obs_source_get_settings(to);
+	obs_data_t *mix = fx_lerp_settings(own, other, t);
+	glow_filter_update(filter, mix);
+	filter->rendered = false;
+	glow_filter_render_impl(data, effect);
+	glow_filter_update(filter, own);
+	obs_data_release(mix);
+	obs_data_release(other);
+	obs_data_release(own);
 }
 
 static obs_properties_t *properties(void *data, bool is_source, enum filter_type filter_type)
@@ -406,6 +440,10 @@ static obs_properties_t *properties(void *data, bool is_source, enum filter_type
 				  GLOW_FILL_TYPE_COLOR);
 	obs_property_list_add_int(glow_fill_method_list, obs_module_text(GLOW_FILL_TYPE_SOURCE_LABEL),
 				  GLOW_FILL_TYPE_SOURCE);
+	obs_property_list_add_int(glow_fill_method_list, obs_module_text(GLOW_FILL_TYPE_GRADIENT_LABEL),
+				  GLOW_FILL_TYPE_GRADIENT);
+	obs_property_list_add_int(glow_fill_method_list, obs_module_text(GLOW_FILL_TYPE_GRADIENT_STRENGTH_LABEL),
+				  GLOW_FILL_TYPE_GRADIENT_STRENGTH);
 	//obs_property_list_add_int(
 	//	glow_fill_method_list,
 	//	obs_module_text(GLOW_FILL_TYPE_IMAGE_LABEL),
@@ -425,6 +463,14 @@ static obs_properties_t *properties(void *data, bool is_source, enum filter_type
 	obs_enum_scenes(stroke_add_source_to_list, glow_fill_source_source);
 	obs_property_list_insert_string(glow_fill_source_source, 0, "None", "");
 
+	gradient_properties(props, GLOW_GRADIENT_PREFIX, data ? &((glow_filter_data_t *)data)->gradient : NULL);
+
+	obs_property_t *cache_p = obs_properties_add_bool(props, "cache_result", obs_module_text("Cache.Result"));
+	obs_property_set_long_description(cache_p, obs_module_text("Cache.Result.Description"));
+	obs_property_t *refresh_p = obs_properties_add_float_slider(props, "cache_refresh",
+								    obs_module_text("Cache.Refresh"), 0.0, 60.0, 0.1);
+	obs_property_float_set_suffix(refresh_p, "s");
+	spectrum_presets_properties(props, data ? ((glow_filter_data_t *)data)->context : NULL);
 	return props;
 }
 
@@ -453,6 +499,7 @@ static void glow_filter_video_tick(void *data, float seconds)
 	glow_filter_data_t *filter = data;
 
 	source_ref_tick(&filter->fill_ref, seconds);
+	gradient_tick(&filter->gradient, seconds);
 	if (filter->is_source) {
 		source_ref_tick(&filter->input_ref, seconds);
 	}
@@ -496,7 +543,18 @@ static void glow_filter_video_tick(void *data, float seconds)
 		filter->output_width = base_width + filter->pad_l + filter->pad_r;
 		filter->output_height = base_height + filter->pad_t + filter->pad_b;
 	}
-	filter->rendered = false;
+	// With caching, keep the last result while it is still valid.
+	bool keep = filter->cache && filter->cache_valid && filter->output_width == filter->cache_w &&
+		    filter->output_height == filter->cache_h && !gradient_is_animated(&filter->gradient);
+	if (keep && filter->cache_refresh > 0.0f) {
+		filter->cache_timer += seconds;
+		if (filter->cache_timer >= filter->cache_refresh) {
+			filter->cache_timer = 0.0f;
+			keep = false;
+		}
+	}
+	if (!keep)
+		filter->rendered = false;
 }
 
 static void glow_filter_defaults(obs_data_t *settings)
@@ -510,6 +568,7 @@ static void glow_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "glow_offset_distance", 0.0);
 	obs_data_set_default_double(settings, "threshold_outer", 100.0);
 	obs_data_set_default_double(settings, "threshold_inner", 0.0);
+	gradient_defaults(settings, GLOW_GRADIENT_PREFIX);
 }
 
 static void shadow_filter_defaults(obs_data_t *settings)
@@ -525,6 +584,7 @@ static void shadow_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "ignore_source_border", true);
 	obs_data_set_default_double(settings, "threshold_outer", 100.0);
 	obs_data_set_default_double(settings, "threshold_inner", 0.0);
+	gradient_defaults(settings, GLOW_GRADIENT_PREFIX);
 }
 
 // Defaults for filters/sources created by this version: pad automatically
@@ -570,6 +630,13 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 {
 	UNUSED_PARAMETER(p);
 	enum glow_fill_type fill_type = (enum glow_fill_type)obs_data_get_int(settings, "glow_fill_type");
+	gradient_set_visible(props, GLOW_GRADIENT_PREFIX,
+			     fill_type == GLOW_FILL_TYPE_GRADIENT || fill_type == GLOW_FILL_TYPE_GRADIENT_STRENGTH);
+	if (fill_type == GLOW_FILL_TYPE_GRADIENT) {
+		gradient_refresh_visibility(props, GLOW_GRADIENT_PREFIX, settings);
+	} else if (fill_type == GLOW_FILL_TYPE_GRADIENT_STRENGTH) {
+		gradient_hide_geometry(props, GLOW_GRADIENT_PREFIX);
+	}
 	switch (fill_type) {
 	case GLOW_FILL_TYPE_COLOR:
 		stroke_setting_visibility("glow_fill_color", true, props);
@@ -585,6 +652,12 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 		stroke_setting_visibility("glow_fill_color", false, props);
 		stroke_setting_visibility("glow_fill_source", false, props);
 		stroke_setting_visibility("glow_fill_image", true, props);
+		break;
+	case GLOW_FILL_TYPE_GRADIENT:
+	case GLOW_FILL_TYPE_GRADIENT_STRENGTH:
+		stroke_setting_visibility("glow_fill_color", false, props);
+		stroke_setting_visibility("glow_fill_source", false, props);
+		stroke_setting_visibility("glow_fill_image", false, props);
 		break;
 	}
 	return true;

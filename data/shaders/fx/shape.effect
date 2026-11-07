@@ -1,0 +1,241 @@
+// Spectrum Shape source: signed distance field shapes with fill, stroke and
+// drop shadow, anti-aliased analytically at any size.
+#include "fx-common.effect"
+
+uniform int sh_shape;
+uniform float sh_radius = 0.0;     // corner radius, px
+uniform float sh_rotation = 0.0;   // degrees
+uniform int sh_sides;
+uniform int sh_points;
+uniform float sh_inner = 50.0;     // star inner radius, %
+uniform float sh_thickness = 25.0; // ring / cross thickness, %
+uniform bool sh_stretch;
+uniform float sh_padding = 0.0;    // px
+
+uniform int sh_fill_type; // 0 none, 1 color, 2 gradient, 3 source
+uniform float4 sh_fill_color;
+uniform texture2d fill_tex;
+
+uniform float sh_stroke_width = 0.0;
+uniform int sh_stroke_position; // 1 inside, 2 center, 3 outside
+uniform float4 sh_stroke_color;
+
+uniform bool sh_shadow;
+uniform float4 sh_shadow_color;
+uniform float sh_shadow_blur = 10.0;
+uniform float sh_shadow_x = 0.0;
+uniform float sh_shadow_y = 0.0;
+
+uniform float sh_opacity = 100.0;
+
+#define SHAPE_RECT 1
+#define SHAPE_ELLIPSE 2
+#define SHAPE_POLYGON 3
+#define SHAPE_STAR 4
+#define SHAPE_HEART 5
+#define SHAPE_RING 6
+#define SHAPE_CROSS 7
+
+float dot2(float2 v)
+{
+	return dot(v, v);
+}
+
+float sd_round_box(float2 p, float2 b, float r)
+{
+	r = min(r, min(b.x, b.y));
+	float2 q = abs(p) - b + r;
+	return min(max(q.x, q.y), 0.0) + length(max(q, float2(0.0, 0.0))) - r;
+}
+
+// Approximate ellipse distance (exact on the axes, close elsewhere).
+float sd_ellipse(float2 p, float2 ab)
+{
+	ab = max(ab, float2(1e-3, 1e-3));
+	float k1 = length(p / ab);
+	float k2 = length(p / (ab * ab));
+	return k2 > 1e-6 ? k1 * (k1 - 1.0) / k2 : -min(ab.x, ab.y);
+}
+
+// Regular polygon with circumradius r, a vertex at the top.
+float sd_polygon(float2 p, float r, float n)
+{
+	float an = PI / n;
+	float2 acs = float2(cos(an), sin(an));
+	// Fold into the first sector (angle measured from the top).
+	float a = atan2(p.x, -p.y);
+	float bn = (a - 2.0 * an * floor(a / (2.0 * an))) - an;
+	p = length(p) * float2(cos(bn), abs(sin(bn)));
+	p -= r * acs;
+	p.y += clamp(-p.y, 0.0, r * acs.y);
+	return length(p) * sign(p.x);
+}
+
+// Star with n points; m in [2, n] controls the inner radius.
+float sd_star(float2 p, float r, float n, float m)
+{
+	float an = PI / n;
+	float en = PI / m;
+	float2 acs = float2(cos(an), sin(an));
+	float2 ecs = float2(cos(en), sin(en));
+	float a = atan2(p.x, -p.y);
+	float bn = (a - 2.0 * an * floor(a / (2.0 * an))) - an;
+	p = length(p) * float2(cos(bn), abs(sin(bn)));
+	p -= r * acs;
+	p += ecs * clamp(-dot(p, ecs), 0.0, r * acs.y / ecs.y);
+	return length(p) * sign(p.x);
+}
+
+// Heart in a unit space (y up, about 1.2 x 1.1).
+float sd_heart(float2 p)
+{
+	p.x = abs(p.x);
+	if (p.y + p.x > 1.0)
+		return sqrt(dot2(p - float2(0.25, 0.75))) - sqrt(2.0) / 4.0;
+	return sqrt(min(dot2(p - float2(0.0, 1.0)), dot2(p - 0.5 * max(p.x + p.y, 0.0)))) * sign(p.x - p.y);
+}
+
+float sd_cross(float2 p, float2 b, float r)
+{
+	p = abs(p);
+	p = (p.y > p.x) ? p.yx : p.xy;
+	float2 q = p - b;
+	float k = max(q.y, q.x);
+	float2 w = (k > 0.0) ? q : float2(b.y - p.x, -k);
+	return sign(k) * length(max(w, float2(0.0, 0.0))) + r;
+}
+
+float stroke_outer_extent()
+{
+	if (sh_stroke_width <= 0.0)
+		return 0.0;
+	if (sh_stroke_position == 3)
+		return sh_stroke_width;
+	if (sh_stroke_position == 2)
+		return sh_stroke_width * 0.5;
+	return 0.0;
+}
+
+// Signed distance (px) of the shape at pixel position pix.
+float shape_distance(float2 pix)
+{
+	float inset = sh_padding + stroke_outer_extent();
+	float2 half_size = max(uv_size * 0.5 - inset, float2(1.0, 1.0));
+	float2 p = pix - uv_size * 0.5;
+	float rot = sh_rotation * PI / 180.0;
+	float cs = cos(rot);
+	float sn = sin(rot);
+	p = float2(cs * p.x + sn * p.y, -sn * p.x + cs * p.y);
+
+	if (sh_shape == SHAPE_RECT)
+		return sd_round_box(p, half_size, sh_radius);
+	if (sh_shape == SHAPE_ELLIPSE)
+		return sd_ellipse(p, half_size);
+	if (sh_shape == SHAPE_RING) {
+		float t = max(min(half_size.x, half_size.y) * sh_thickness / 100.0, 0.5);
+		return abs(sd_ellipse(p, half_size - t * 0.5)) - t * 0.5;
+	}
+	if (sh_shape == SHAPE_CROSS) {
+		float t = max(min(half_size.x, half_size.y) * sh_thickness / 100.0, 0.5);
+		float s = min(half_size.x, half_size.y);
+		float2 q = p;
+		float scale = 1.0;
+		if (sh_stretch) {
+			q = p * s / half_size;
+			scale = min(half_size.x, half_size.y) / s;
+		}
+		return sd_cross(q, float2(s, t), -min(sh_radius, t)) * scale - 0.0;
+	}
+
+	// Shapes defined with a uniform radius: fit, or stretch to the box.
+	float s = min(half_size.x, half_size.y);
+	float2 q = sh_stretch ? p * s / half_size : p;
+	float scale = sh_stretch ? min(half_size.x / s, half_size.y / s) : 1.0;
+	float d;
+	// Rounding grows the shape by sh_radius: shrink it first so it fits.
+	float r = min(max(sh_radius, 0.0), s * 0.5);
+	s = max(s - r, 1.0);
+	if (sh_shape == SHAPE_POLYGON) {
+		d = sd_polygon(q, s, max(float(sh_sides), 3.0));
+	} else if (sh_shape == SHAPE_STAR) {
+		float n = max(float(sh_points), 3.0);
+		float m = 2.0 + (n - 2.0) * saturate(sh_inner / 100.0);
+		d = sd_star(q, s, n, m);
+	} else {
+		// Heart: unit space is about 1.2 wide and 1.1 high, y up.
+		float k = min(s * 2.0 / 1.2, s * 2.0 / 1.1);
+		float2 h = float2(q.x, -q.y) / k + float2(0.0, 0.55);
+		d = sd_heart(h) * k;
+	}
+	return (d - r) * scale;
+}
+
+float coverage(float d, float aa)
+{
+	return saturate(0.5 - d / max(aa, 1e-4));
+}
+
+float4 fill_color(float2 uv)
+{
+	if (sh_fill_type == 1)
+		return sh_fill_color;
+	if (sh_fill_type == 2 || sh_fill_type == 3) {
+		// Fill textures are sRGB encoded, premultiplied in linear light.
+		float4 t = fill_tex.Sample(textureSampler, uv);
+		float3 lin = srgb_to_linear(t.rgb);
+		lin = t.a > 0.0 ? lin / t.a : float3(0.0, 0.0, 0.0);
+		return float4(linear_to_srgb(lin), t.a);
+	}
+	return float4(0.0, 0.0, 0.0, 0.0);
+}
+
+// Straight alpha "a over b".
+float4 over(float4 a, float4 b)
+{
+	float out_a = a.a + b.a * (1.0 - a.a);
+	float3 premul = a.rgb * a.a + b.rgb * b.a * (1.0 - a.a);
+	return float4(out_a > 0.0 ? premul / out_a : float3(0.0, 0.0, 0.0), out_a);
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 pix = v_in.uv * uv_size;
+	float d = shape_distance(pix);
+	float aa = length(float2(ddx(d), ddy(d))) + 1e-4;
+
+	float sw = max(sh_stroke_width, 0.0);
+	float fill_d = d;
+	float4 result = float4(0.0, 0.0, 0.0, 0.0);
+
+	float4 fc = fill_color(v_in.uv);
+	result = float4(fc.rgb, fc.a * coverage(fill_d, aa));
+
+	float outer = 0.0;
+	if (sw > 0.0) {
+		float lo = sh_stroke_position == 1 ? -sw : (sh_stroke_position == 2 ? -sw * 0.5 : 0.0);
+		float hi = lo + sw;
+		outer = hi;
+		float band = coverage(d - hi, aa) * (1.0 - coverage(d - lo, aa));
+		float4 sc = float4(sh_stroke_color.rgb, sh_stroke_color.a * band);
+		result = over(sc, result);
+	}
+
+	if (sh_shadow) {
+		float ds = shape_distance(pix - float2(sh_shadow_x, sh_shadow_y)) - outer;
+		float blur = max(sh_shadow_blur, 0.5);
+		float a = 1.0 - smoothstep(-blur, blur, ds);
+		result = over(result, float4(sh_shadow_color.rgb, sh_shadow_color.a * a));
+	}
+
+	result.a *= saturate(sh_opacity / 100.0);
+	return fx_output(result, v_in.uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}

@@ -1,0 +1,129 @@
+// Spectrum Distort: wave, ripple, twirl, bulge/pinch, noise displacement and
+// displacement by another source (offset map or refraction).
+#include "fx-common.effect"
+
+uniform int ds_mode;
+uniform float ds_center_x = 50.0; // %
+uniform float ds_center_y = 50.0; // %
+uniform float ds_amount = 20.0;   // px (waves, noise, maps) or % (bulge) or degrees (twirl)
+uniform float ds_wavelength = 80.0; // px
+uniform float ds_angle = 0.0;     // degrees (wave direction)
+uniform float ds_radius = 50.0;   // % of the smaller side
+uniform float ds_speed = 1.0;     // cycles per second
+uniform float ds_decay = 50.0;    // ripple decay, %
+uniform float ds_scale = 120.0;   // noise scale, px
+uniform int ds_map_mode;          // 1 red/green offsets, 2 brightness height (refraction)
+uniform int ds_edge;              // 1 clamp, 2 transparent, 3 mirror
+uniform texture2d map_tex;
+uniform float map_enabled = 0.0;
+
+#define MODE_WAVE 1
+#define MODE_RIPPLE 2
+#define MODE_TWIRL 3
+#define MODE_BULGE 4
+#define MODE_NOISE 5
+#define MODE_MAP 6
+
+float4 map_sample(float2 uv)
+{
+	// The map is rendered in float, linear light, straight alpha.
+	float4 t = map_tex.Sample(textureSampler, uv);
+	float3 lin = max(t.rgb, float3(0.0, 0.0, 0.0));
+	return float4(linear_to_srgb(lin), t.a);
+}
+
+float map_height(float2 uv)
+{
+	float4 m = map_sample(uv);
+	return luma(m.rgb) * m.a;
+}
+
+float2 mirror_uv(float2 uv)
+{
+	return 1.0 - abs(frac(uv * 0.5) * 2.0 - 1.0);
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 pix = v_in.uv * uv_size;
+	float2 center = float2(ds_center_x, ds_center_y) / 100.0 * uv_size;
+	float2 d = pix - center;
+	float radius = max(ds_radius / 100.0 * min(uv_size.x, uv_size.y), 1.0);
+	float2 offset = float2(0.0, 0.0); // px, where to sample relative to pix
+
+	if (ds_mode == MODE_WAVE) {
+		float a = ds_angle * PI / 180.0;
+		float2 dir = float2(cos(a), sin(a));
+		float2 perp = float2(-dir.y, dir.x);
+		float phase = dot(pix, dir) / max(ds_wavelength, 1.0) * TAU - time * ds_speed * TAU;
+		offset = perp * sin(phase) * ds_amount;
+	} else if (ds_mode == MODE_RIPPLE) {
+		float r = length(d);
+		float phase = r / max(ds_wavelength, 1.0) * TAU - time * ds_speed * TAU;
+		float decay = exp(-r / radius * ds_decay / 100.0);
+		float2 n = r > 1e-3 ? d / r : float2(0.0, 0.0);
+		offset = n * sin(phase) * ds_amount * decay;
+	} else if (ds_mode == MODE_TWIRL) {
+		float r = length(d);
+		float k = saturate(1.0 - r / radius);
+		float a = ds_amount * PI / 180.0 * k * k;
+		float cs = cos(a);
+		float sn = sin(a);
+		float2 rd = float2(cs * d.x - sn * d.y, sn * d.x + cs * d.y);
+		offset = rd - d;
+	} else if (ds_mode == MODE_BULGE) {
+		float r = length(d);
+		if (r < radius) {
+			float x = r / radius;
+			// Positive bulges (magnifies the centre), negative pinches.
+			float s = clamp(ds_amount / 100.0, -1.0, 1.0);
+			float f = s >= 0.0 ? pow(x, 1.0 + s * 1.5) : pow(x, 1.0 / (1.0 - s * 1.5));
+			float blend = smoothstep(1.0, 0.9, x);
+			offset = d * ((f / max(x, 1e-4)) - 1.0) * blend;
+		}
+	} else if (ds_mode == MODE_NOISE) {
+		float2 p = pix / max(ds_scale, 1.0);
+		float t = time * ds_speed;
+		float nx = value_noise(p + float2(t, 0.0)) + 0.5 * value_noise(p * 2.0 + float2(5.2, t * 1.3));
+		float ny = value_noise(p + float2(17.3, -t)) + 0.5 * value_noise(p * 2.0 + float2(-t * 1.1, 9.7));
+		offset = (float2(nx, ny) / 1.5 - 0.5) * 2.0 * ds_amount;
+	} else if (ds_mode == MODE_MAP && map_enabled > 0.5) {
+		if (ds_map_mode == 2) {
+			// Refraction: treat the map as a surface and bend along its
+			// normal. Gentle slopes bend proportionally, steep ones up to
+			// the full amount.
+			float e_px = 3.0;
+			float2 e = e_px / uv_size;
+			float hx = map_height(v_in.uv + float2(e.x, 0.0)) - map_height(v_in.uv - float2(e.x, 0.0));
+			float hy = map_height(v_in.uv + float2(0.0, e.y)) - map_height(v_in.uv - float2(0.0, e.y));
+			// Ignore differences at the level of 8-bit dithering in the map.
+			float2 dz = max(abs(float2(hx, hy)) - 3.0 / 255.0, float2(0.0, 0.0)) * sign(float2(hx, hy));
+			float2 slope = dz / (2.0 * e_px);
+			float3 n = normalize(float3(-slope * 40.0, 1.0));
+			offset = n.xy * ds_amount;
+		} else {
+			float4 m = map_sample(v_in.uv);
+			offset = (m.rg - 0.5) * 2.0 * ds_amount * m.a;
+		}
+	}
+
+	float2 uv = (pix + offset) / uv_size;
+	float4 c;
+	if (ds_edge == 2) {
+		c = fx_input_border(uv);
+	} else if (ds_edge == 3) {
+		c = fx_input(mirror_uv(uv));
+	} else {
+		c = fx_input(uv);
+	}
+	return fx_output(c, v_in.uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}

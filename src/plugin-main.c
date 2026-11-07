@@ -37,6 +37,33 @@ extern struct obs_source_info spectrum_shadow_source;
 /* Masks */
 extern struct obs_source_info spectrum_mask_filter;
 
+/* Gradient */
+extern struct obs_source_info spectrum_gradient_source;
+
+/* Effects */
+extern struct obs_source_info spectrum_gradient_map_filter;
+extern struct obs_source_info spectrum_long_shadow_filter;
+extern struct obs_source_info spectrum_bevel_filter;
+extern struct obs_source_info spectrum_color_tools_filter;
+extern struct obs_source_info spectrum_distort_filter;
+extern struct obs_source_info spectrum_stylize_filter;
+extern struct obs_source_info spectrum_light_filter;
+extern struct obs_source_info spectrum_shape_source;
+extern struct obs_source_info spectrum_noise_source;
+
+/* Animation */
+extern struct obs_source_info spectrum_animate_filter;
+
+#include "common/fx-filter.h"
+
+// Registers a filter built on the fx framework, which supports Move
+// Transition interpolation.
+static void register_fx_filter(struct obs_source_info *info)
+{
+	obs_register_source(info);
+	fx_filter_register_move_id(info->id);
+}
+
 /* Optional hook provided by the Move Transition plugin, shared by the
  * blur and mask filters so they can interpolate between filter states. */
 float (*move_get_transition_filter)(obs_source_t *filter_from, obs_source_t **filter_to) = NULL;
@@ -61,8 +88,30 @@ bool obs_module_load(void)
 	obs_register_source(&spectrum_glow_source);
 	obs_register_source(&spectrum_shadow_filter);
 	obs_register_source(&spectrum_shadow_source);
+	// Their render interpolates settings during Move Transitions (the
+	// versioned ids too, in case the Move plugin matches those).
+	fx_filter_register_move_id(spectrum_stroke_filter.id);
+	fx_filter_register_move_id(spectrum_glow_filter.id);
+	fx_filter_register_move_id(spectrum_shadow_filter.id);
+	fx_filter_register_move_id("spectrum_stroke_filter_v1");
+	fx_filter_register_move_id("spectrum_glow_filter_v1");
+	fx_filter_register_move_id("spectrum_shadow_filter_v1");
 
 	obs_register_source(&spectrum_mask_filter);
+
+	obs_register_source(&spectrum_gradient_source);
+
+	register_fx_filter(&spectrum_gradient_map_filter);
+	register_fx_filter(&spectrum_long_shadow_filter);
+	register_fx_filter(&spectrum_bevel_filter);
+	register_fx_filter(&spectrum_color_tools_filter);
+	register_fx_filter(&spectrum_distort_filter);
+	register_fx_filter(&spectrum_stylize_filter);
+	obs_register_source(&spectrum_light_filter);
+	obs_register_source(&spectrum_shape_source);
+	obs_register_source(&spectrum_noise_source);
+
+	obs_register_source(&spectrum_animate_filter);
 
 	obs_log(LOG_INFO, "loaded version %s", PLUGIN_VERSION);
 	return true;
@@ -73,10 +122,16 @@ void obs_module_post_load(void)
 	if (obs_get_module("move-transition") == NULL)
 		return;
 
-	const char *filter_ids[] = {spectrum_blur_filter.id, spectrum_mask_filter.id};
+	const size_t fx_count = fx_filter_move_id_count();
+	const char *filter_ids[2 + 64];
+	size_t count = 0;
+	filter_ids[count++] = spectrum_blur_filter.id;
+	filter_ids[count++] = spectrum_mask_filter.id;
+	for (size_t i = 0; i < fx_count && count < OBS_COUNTOF(filter_ids); i++)
+		filter_ids[count++] = fx_filter_move_id(i);
 	proc_handler_t *ph = obs_get_proc_handler();
 
-	for (size_t i = 0; i < sizeof(filter_ids) / sizeof(filter_ids[0]); i++) {
+	for (size_t i = 0; i < count; i++) {
 		struct calldata cd;
 		calldata_init(&cd);
 		calldata_set_string(&cd, "filter_id", filter_ids[i]);
