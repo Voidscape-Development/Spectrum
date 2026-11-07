@@ -161,7 +161,12 @@ target_sources(
 # Single-pass effects
 target_sources(
   ${CMAKE_PROJECT_NAME}
-  PRIVATE src/common/fx-filter.c src/common/fx-filter.h src/fx/gradient-map.c src/fx/shape-source.c
+  PRIVATE
+    src/common/fx-filter.c
+    src/common/fx-filter.h
+    src/fx/gradient-map.c
+    src/fx/shape-source.c
+    src/fx/noise-source.c
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
