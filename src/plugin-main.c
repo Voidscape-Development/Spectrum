@@ -45,6 +45,7 @@ extern struct obs_source_info spectrum_gradient_map_filter;
 extern struct obs_source_info spectrum_long_shadow_filter;
 extern struct obs_source_info spectrum_bevel_filter;
 extern struct obs_source_info spectrum_color_tools_filter;
+extern struct obs_source_info spectrum_distort_filter;
 extern struct obs_source_info spectrum_shape_source;
 extern struct obs_source_info spectrum_noise_source;
 
@@ -94,6 +95,7 @@ bool obs_module_load(void)
 	register_fx_filter(&spectrum_long_shadow_filter);
 	register_fx_filter(&spectrum_bevel_filter);
 	register_fx_filter(&spectrum_color_tools_filter);
+	register_fx_filter(&spectrum_distort_filter);
 	obs_register_source(&spectrum_shape_source);
 	obs_register_source(&spectrum_noise_source);
 
