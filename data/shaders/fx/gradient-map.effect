@@ -1,0 +1,64 @@
+// Spectrum Gradient Map: maps a channel of the source through a gradient.
+#include "fx-common.effect"
+
+uniform int gm_source = 1;
+uniform float gm_black = 0.0;  // %
+uniform float gm_white = 100.0; // %
+uniform float gm_gamma = 1.0;
+uniform bool gm_invert;
+uniform int gm_blend = 1;
+uniform float gm_amount = 100.0; // %
+uniform bool gm_use_alpha;
+
+float map_value(float4 c)
+{
+	if (gm_source == 2)
+		return srgb_to_oklab(c.rgb).x;
+	if (gm_source == 3)
+		return (c.r + c.g + c.b) / 3.0;
+	if (gm_source == 4)
+		return max(c.r, max(c.g, c.b));
+	if (gm_source == 5)
+		return c.r;
+	if (gm_source == 6)
+		return c.g;
+	if (gm_source == 7)
+		return c.b;
+	if (gm_source == 8)
+		return c.a;
+	return luma(c.rgb);
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float4 c = fx_input(v_in.uv);
+
+	float lo = gm_black / 100.0;
+	float hi = gm_white / 100.0;
+	float v = saturate((map_value(c) - lo) / max(hi - lo, 1e-4));
+	v = pow(v, 1.0 / max(gm_gamma, 0.01));
+	if (gm_invert)
+		v = 1.0 - v;
+
+	float4 g = gradient_sample(v);
+	float amount = saturate(gm_amount / 100.0);
+
+	float3 mixed = blend_rgb(c.rgb, g.rgb, gm_blend);
+	float a = c.a;
+	float k = amount;
+	if (gm_use_alpha)
+		a = c.a * lerp(1.0, g.a, amount);
+	else
+		k *= g.a;
+
+	return fx_output(float4(lerp(c.rgb, mixed, k), a), v_in.uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}

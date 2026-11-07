@@ -520,9 +520,22 @@ void gradient_update(gradient_t *g, obs_data_t *settings)
 	struct gradient_stop stops[GRADIENT_MAX_STOPS];
 	const size_t count = gradient_read_stops(settings, prefix, stops, GRADIENT_MAX_STOPS);
 
+	// Only re-bake when the stops or blending changed: animated settings
+	// can update a source every frame.
+	uint64_t hash = 1469598103934665603ull;
+	const uint8_t *bytes = (const uint8_t *)stops;
+	for (size_t i = 0; i < sizeof(struct gradient_stop) * count; i++)
+		hash = (hash ^ bytes[i]) * 1099511628211ull;
+	hash = (hash ^ (uint64_t)interp) * 1099511628211ull;
+	hash = (hash ^ (uint64_t)count) * 1099511628211ull;
+
 	pthread_mutex_lock(&g->mutex);
-	gradient_bake(stops, count, interp, g->lut_pending, GRADIENT_LUT_SIZE);
-	g->lut_dirty = true;
+	if (!g->lut_baked || hash != g->lut_hash) {
+		gradient_bake(stops, count, interp, g->lut_pending, GRADIENT_LUT_SIZE);
+		g->lut_dirty = true;
+		g->lut_baked = true;
+		g->lut_hash = hash;
+	}
 	pthread_mutex_unlock(&g->mutex);
 }
 
@@ -605,23 +618,31 @@ static obs_property_t *add_float(obs_properties_t *group, const char *name, cons
 
 void gradient_properties(obs_properties_t *props, const char *prefix, gradient_t *g)
 {
+	gradient_properties_ex(props, prefix, g, 0);
+}
+
+void gradient_properties_ex(obs_properties_t *props, const char *prefix, gradient_t *g, uint32_t flags)
+{
 	char kbuf[128];
 	obs_property_t *p;
+	const bool map = (flags & GRADIENT_PROPS_MAP) != 0;
 
 	/* Gradient */
 	obs_properties_t *group = obs_properties_create();
 
-	p = obs_properties_add_list(group, KEY("shape"), obs_module_text("Gradient.Shape"), OBS_COMBO_TYPE_LIST,
-				    OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Linear"), GRADIENT_SHAPE_LINEAR);
-	obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Reflected"), GRADIENT_SHAPE_REFLECTED);
-	obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Radial"), GRADIENT_SHAPE_RADIAL);
-	obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Elliptical"), GRADIENT_SHAPE_ELLIPTICAL);
-	obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Conic"), GRADIENT_SHAPE_CONIC);
-	obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Spiral"), GRADIENT_SHAPE_SPIRAL);
-	obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Diamond"), GRADIENT_SHAPE_DIAMOND);
-	obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Corners"), GRADIENT_SHAPE_CORNERS);
-	obs_property_set_modified_callback2(p, shape_modified, (void *)prefix);
+	if (!map) {
+		p = obs_properties_add_list(group, KEY("shape"), obs_module_text("Gradient.Shape"), OBS_COMBO_TYPE_LIST,
+					    OBS_COMBO_FORMAT_INT);
+		obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Linear"), GRADIENT_SHAPE_LINEAR);
+		obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Reflected"), GRADIENT_SHAPE_REFLECTED);
+		obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Radial"), GRADIENT_SHAPE_RADIAL);
+		obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Elliptical"), GRADIENT_SHAPE_ELLIPTICAL);
+		obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Conic"), GRADIENT_SHAPE_CONIC);
+		obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Spiral"), GRADIENT_SHAPE_SPIRAL);
+		obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Diamond"), GRADIENT_SHAPE_DIAMOND);
+		obs_property_list_add_int(p, obs_module_text("Gradient.Shape.Corners"), GRADIENT_SHAPE_CORNERS);
+		obs_property_set_modified_callback2(p, shape_modified, (void *)prefix);
+	}
 
 	obs_properties_add_button2(group, KEY("edit_stops"), obs_module_text("Gradient.EditStops"), edit_stops_clicked,
 				   g);
@@ -646,6 +667,19 @@ void gradient_properties(obs_properties_t *props, const char *prefix, gradient_t
 	obs_property_list_add_int(p, obs_module_text("Gradient.Repeat.Pad"), GRADIENT_REPEAT_PAD);
 	obs_property_list_add_int(p, obs_module_text("Gradient.Repeat.Repeat"), GRADIENT_REPEAT_REPEAT);
 	obs_property_list_add_int(p, obs_module_text("Gradient.Repeat.Mirror"), GRADIENT_REPEAT_MIRROR);
+
+	if (map) {
+		add_float(group, KEY("offset"), "Gradient.Offset", -100.0, 100.0, 0.1, "%");
+		obs_properties_add_group(props, KEY("group"), obs_module_text("Gradient.Group"), OBS_GROUP_NORMAL,
+					 group);
+		obs_properties_t *anim = obs_properties_create();
+		add_float(anim, KEY("anim_scroll"), "Gradient.Anim.Scroll", -5.0, 5.0, 0.01, "/s");
+		add_float(anim, KEY("anim_hue"), "Gradient.Anim.Hue", -360.0, 360.0, 0.1, "°/s");
+		add_float(anim, KEY("hue_shift"), "Gradient.HueShift", -180.0, 180.0, 0.1, "°");
+		obs_properties_add_group(props, KEY("anim_group"), obs_module_text("Gradient.AnimGroup"),
+					 OBS_GROUP_NORMAL, anim);
+		return;
+	}
 
 	add_float(group, KEY("center_x"), "Gradient.CenterX", -100.0, 200.0, 0.1, "%");
 	add_float(group, KEY("center_y"), "Gradient.CenterY", -100.0, 200.0, 0.1, "%");
@@ -711,6 +745,23 @@ void gradient_tick(gradient_t *g, float seconds)
  * Rendering
  * --------------------------------------------------------------------- */
 
+static bool ensure_lut(gradient_t *g)
+{
+	pthread_mutex_lock(&g->mutex);
+	if (g->lut_dirty || !g->lut_texture) {
+		if (!g->lut_texture) {
+			const uint8_t *data = (const uint8_t *)g->lut_pending;
+			g->lut_texture = gs_texture_create(GRADIENT_LUT_SIZE, 1, GS_RGBA32F, 1, &data, GS_DYNAMIC);
+		} else {
+			gs_texture_set_image(g->lut_texture, (const uint8_t *)g->lut_pending,
+					     GRADIENT_LUT_SIZE * 4 * sizeof(float), false);
+		}
+		g->lut_dirty = false;
+	}
+	pthread_mutex_unlock(&g->mutex);
+	return g->lut_texture != NULL;
+}
+
 static bool ensure_resources(gradient_t *g)
 {
 	if (!g->effect) {
@@ -725,21 +776,7 @@ static bool ensure_resources(gradient_t *g)
 		if (!g->effect)
 			return false;
 	}
-
-	pthread_mutex_lock(&g->mutex);
-	if (g->lut_dirty || !g->lut_texture) {
-		if (!g->lut_texture) {
-			const uint8_t *data = (const uint8_t *)g->lut_pending;
-			g->lut_texture = gs_texture_create(GRADIENT_LUT_SIZE, 1, GS_RGBA32F, 1, &data, GS_DYNAMIC);
-		} else {
-			gs_texture_set_image(g->lut_texture, (const uint8_t *)g->lut_pending,
-					     GRADIENT_LUT_SIZE * 4 * sizeof(float), false);
-		}
-		g->lut_dirty = false;
-	}
-	pthread_mutex_unlock(&g->mutex);
-
-	return g->lut_texture != NULL;
+	return ensure_lut(g);
 }
 
 static void set_float(gs_effect_t *e, const char *name, float v)
@@ -885,7 +922,7 @@ static void set_params(gradient_t *g, uint32_t width, uint32_t height, float dit
 
 // The size of one quantisation step of the current render target, in
 // (sRGB encoded) output units, or 0 for float targets that don't band.
-static float target_dither_step(void)
+float spectrum_target_dither_step(void)
 {
 	gs_texture_t *target = gs_get_render_target();
 	// No texture: a swap chain (preview, projector), which is 8-bit.
@@ -912,7 +949,7 @@ void gradient_draw(gradient_t *g, uint32_t width, uint32_t height)
 	if (!width || !height || !ensure_resources(g))
 		return;
 
-	set_params(g, width, height, target_dither_step());
+	set_params(g, width, height, spectrum_target_dither_step());
 
 	// Output linear values and let the sRGB framebuffer encode them, so
 	// alpha blends in linear light (as OBS' color source does).
@@ -953,4 +990,18 @@ gs_texture_t *gradient_render_fill(gradient_t *g, uint32_t width, uint32_t heigh
 	gs_enable_framebuffer_srgb(previous);
 
 	return gs_texrender_get_texture(g->fill_texrender);
+}
+
+bool gradient_bind_lut(gradient_t *g, gs_effect_t *effect)
+{
+	if (!ensure_lut(g))
+		return false;
+	gs_eparam_t *p = gs_effect_get_param_by_name(effect, "gradient_lut");
+	if (p)
+		gs_effect_set_texture(p, g->lut_texture);
+	set_float(effect, "gradient_lut_size", (float)GRADIENT_LUT_SIZE);
+	set_float(effect, "gradient_offset", g->offset + g->time_scroll);
+	set_int(effect, "gradient_repeat", (int)g->repeat);
+	set_float(effect, "gradient_hue", (float)((g->hue_shift + g->time_hue) * M_PI / 180.0));
+	return true;
 }

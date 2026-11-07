@@ -108,6 +108,8 @@ typedef struct gradient {
 	pthread_mutex_t mutex;
 	float *lut_pending;
 	bool lut_dirty;
+	bool lut_baked;
+	uint64_t lut_hash;
 
 	// Graphics resources.
 	gs_texture_t *lut_texture;
@@ -125,6 +127,11 @@ void gradient_update(gradient_t *g, obs_data_t *settings);
 // Adds the gradient settings as groups. `g` may be NULL (no instance), in
 // which case the stop editor button does nothing.
 void gradient_properties(obs_properties_t *props, const char *prefix, gradient_t *g);
+
+// Only the stops, blending, extend mode, offset and hue animation: for
+// effects that map a value through the gradient (gradient map, noise).
+#define GRADIENT_PROPS_MAP (1u << 0)
+void gradient_properties_ex(obs_properties_t *props, const char *prefix, gradient_t *g, uint32_t flags);
 // Shows or hides all of the gradient's groups (for fill type lists).
 void gradient_set_visible(obs_properties_t *props, const char *prefix, bool visible);
 // Applies the shape dependent visibility of the gradient settings.
@@ -142,6 +149,16 @@ void gradient_draw(gradient_t *g, uint32_t width, uint32_t height);
 // fill (sRGB encoded, premultiplied in linear space, like a rendered fill
 // source). Returns NULL on failure.
 gs_texture_t *gradient_render_fill(gradient_t *g, uint32_t width, uint32_t height);
+
+// Binds the lookup table to another effect, for shaders that sample the
+// gradient themselves (see data/shaders/fx/fx-common.effect): sets
+// gradient_lut, gradient_lut_size, gradient_offset, gradient_repeat and
+// gradient_hue where the effect has them. Graphics thread.
+bool gradient_bind_lut(gradient_t *g, gs_effect_t *effect);
+
+// The size of one quantisation step of the current render target in
+// (sRGB encoded) output units, or 0 for float targets. Graphics thread.
+float spectrum_target_dither_step(void);
 
 // Stops stored in settings.
 size_t gradient_read_stops(obs_data_t *settings, const char *prefix, struct gradient_stop *stops, size_t max_stops);
