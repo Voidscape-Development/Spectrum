@@ -88,6 +88,14 @@ bool obs_module_load(void)
 	obs_register_source(&spectrum_glow_source);
 	obs_register_source(&spectrum_shadow_filter);
 	obs_register_source(&spectrum_shadow_source);
+	// Their render interpolates settings during Move Transitions (the
+	// versioned ids too, in case the Move plugin matches those).
+	fx_filter_register_move_id(spectrum_stroke_filter.id);
+	fx_filter_register_move_id(spectrum_glow_filter.id);
+	fx_filter_register_move_id(spectrum_shadow_filter.id);
+	fx_filter_register_move_id("spectrum_stroke_filter_v1");
+	fx_filter_register_move_id("spectrum_glow_filter_v1");
+	fx_filter_register_move_id("spectrum_shadow_filter_v1");
 
 	obs_register_source(&spectrum_mask_filter);
 

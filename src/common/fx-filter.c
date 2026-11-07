@@ -453,3 +453,94 @@ void fx_add_blend_list(obs_properties_t *props, const char *key)
 	obs_property_list_add_int(p, obs_module_text("Fx.Blend.Luminosity"), 8);
 	obs_property_list_add_int(p, obs_module_text("Fx.Blend.Hue"), 9);
 }
+
+/* ------------------------------------------------------------------------
+ * Settings interpolation (Move Transition for multi-pass filters)
+ * --------------------------------------------------------------------- */
+
+static uint32_t lerp_color(uint32_t a, uint32_t b, float t)
+{
+	uint32_t out = 0;
+	for (int shift = 0; shift < 32; shift += 8) {
+		const float ca = (float)((a >> shift) & 0xFF), cb = (float)((b >> shift) & 0xFF);
+		const uint32_t c = (uint32_t)(ca + (cb - ca) * t + 0.5f);
+		out |= (c > 255 ? 255 : c) << shift;
+	}
+	return out;
+}
+
+obs_data_t *fx_lerp_settings(obs_data_t *from, obs_data_t *to, float t)
+{
+	obs_data_t *a = obs_data_create_from_json(obs_data_get_json_with_defaults(from));
+	obs_data_t *b = obs_data_create_from_json(obs_data_get_json_with_defaults(to));
+	obs_data_t *out = obs_data_create();
+
+	for (obs_data_item_t *item = obs_data_first(a); item; obs_data_item_next(&item)) {
+		const char *name = obs_data_item_get_name(item);
+		obs_data_item_t *other = obs_data_item_byname(b, name);
+		const bool second = t >= 0.5f && other;
+		obs_data_t *src = second ? b : a;
+
+		if (obs_data_item_gettype(item) == OBS_DATA_NUMBER && other &&
+		    obs_data_item_gettype(other) == OBS_DATA_NUMBER) {
+			if (obs_data_item_numtype(item) == OBS_DATA_NUM_DOUBLE) {
+				const double va = obs_data_get_double(a, name), vb = obs_data_get_double(b, name);
+				obs_data_set_double(out, name, va + (vb - va) * t);
+			} else if (strstr(name, "color")) {
+				obs_data_set_int(out, name,
+						 lerp_color((uint32_t)obs_data_get_int(a, name),
+							    (uint32_t)obs_data_get_int(b, name), t));
+			} else {
+				obs_data_set_int(out, name, obs_data_get_int(src, name));
+			}
+		} else {
+			// Strings, bools, arrays and objects switch half way.
+			obs_data_item_t *chosen = second ? other : item;
+			switch (obs_data_item_gettype(chosen)) {
+			case OBS_DATA_STRING:
+				obs_data_set_string(out, name, obs_data_item_get_string(chosen));
+				break;
+			case OBS_DATA_BOOLEAN:
+				obs_data_set_bool(out, name, obs_data_item_get_bool(chosen));
+				break;
+			case OBS_DATA_NUMBER:
+				if (obs_data_item_numtype(chosen) == OBS_DATA_NUM_DOUBLE)
+					obs_data_set_double(out, name, obs_data_item_get_double(chosen));
+				else
+					obs_data_set_int(out, name, obs_data_item_get_int(chosen));
+				break;
+			case OBS_DATA_ARRAY: {
+				obs_data_array_t *arr = obs_data_item_get_array(chosen);
+				obs_data_set_array(out, name, arr);
+				obs_data_array_release(arr);
+				break;
+			}
+			case OBS_DATA_OBJECT: {
+				obs_data_t *obj = obs_data_item_get_obj(chosen);
+				obs_data_set_obj(out, name, obj);
+				obs_data_release(obj);
+				break;
+			}
+			default:
+				break;
+			}
+		}
+		obs_data_item_release(&other);
+	}
+	obs_data_release(a);
+	obs_data_release(b);
+	return out;
+}
+
+float fx_move_target(obs_source_t *filter, obs_source_t **target)
+{
+	*target = NULL;
+	if (!move_get_transition_filter || obs_source_get_type(filter) != OBS_SOURCE_TYPE_FILTER)
+		return 0.0f;
+	obs_source_t *to = NULL;
+	const float f = move_get_transition_filter(filter, &to);
+	if (!to || f <= 0.0f || strcmp(obs_source_get_unversioned_id(to), obs_source_get_unversioned_id(filter)) != 0)
+		return 0.0f;
+	*target = to;
+	return f;
+}

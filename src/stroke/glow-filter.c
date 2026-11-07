@@ -6,6 +6,7 @@
 
 #include <math.h>
 #include "../common/presets.h"
+#include "../common/fx-filter.h"
 
 // Version 1 changed the defaults (see glow_filter_defaults_v1). Filters and
 // sources saved by earlier versions are loaded as version 0, which keeps the
@@ -251,7 +252,7 @@ static void glow_filter_update(void *data, obs_data_t *settings)
 	}
 }
 
-static void glow_filter_video_render(void *data, gs_effect_t *effect)
+static void glow_filter_render_impl(void *data, gs_effect_t *effect)
 {
 	UNUSED_PARAMETER(effect);
 	glow_filter_data_t *filter = data;
@@ -307,6 +308,29 @@ static void glow_filter_video_render(void *data, gs_effect_t *effect)
 
 	filter->rendered = true;
 	filter->rendering = false;
+}
+
+// During a Move Transition between two filters of this kind, render with
+// their settings interpolated, then restore this filter's own.
+static void glow_filter_video_render(void *data, gs_effect_t *effect)
+{
+	glow_filter_data_t *filter = data;
+	obs_source_t *to = NULL;
+	const float t = filter->is_filter ? fx_move_target(filter->context, &to) : 0.0f;
+	if (!to) {
+		glow_filter_render_impl(data, effect);
+		return;
+	}
+	obs_data_t *own = obs_source_get_settings(filter->context);
+	obs_data_t *other = obs_source_get_settings(to);
+	obs_data_t *mix = fx_lerp_settings(own, other, t);
+	glow_filter_update(filter, mix);
+	filter->rendered = false;
+	glow_filter_render_impl(data, effect);
+	glow_filter_update(filter, own);
+	obs_data_release(mix);
+	obs_data_release(other);
+	obs_data_release(own);
 }
 
 static obs_properties_t *properties(void *data, bool is_source, enum filter_type filter_type)

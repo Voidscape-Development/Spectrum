@@ -99,6 +99,14 @@ void fx_size_defaults(obs_data_t *settings);
 // A blend mode list matching blend_rgb() in fx-common.effect.
 void fx_add_blend_list(obs_properties_t *props, const char *key);
 
+// Move Transition support for filters with their own pipeline: the
+// counterpart filter of the same kind and the progress (0 when none).
+float fx_move_target(obs_source_t *filter, obs_source_t **target);
+// Settings interpolated from `from` to `to` (with defaults): numbers and
+// colors (keys containing "color") blend, everything else switches half
+// way. Returns a new obs_data_t (release it).
+obs_data_t *fx_lerp_settings(obs_data_t *from, obs_data_t *to, float t);
+
 // Helpers for set_params callbacks.
 void fx_set_float(gs_effect_t *effect, const char *name, float value);
 void fx_set_int(gs_effect_t *effect, const char *name, int value);
