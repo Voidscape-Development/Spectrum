@@ -261,7 +261,7 @@ void fx_filter_tick(fx_filter_t *fx, float seconds)
  * Rendering
  * --------------------------------------------------------------------- */
 
-static bool ensure_effect(fx_filter_t *fx)
+bool fx_filter_ensure_effect(fx_filter_t *fx)
 {
 	if (fx->effect)
 		return true;
@@ -299,8 +299,8 @@ static fx_filter_t *move_target(fx_filter_t *fx, float *t)
 	return to;
 }
 
-static void set_common(fx_filter_t *fx, gs_effect_t *e, obs_data_t *settings, obs_data_t *to, float t, uint32_t w,
-		       uint32_t h, bool linear, float pad)
+void fx_filter_set_common(fx_filter_t *fx, gs_effect_t *e, obs_data_t *settings, obs_data_t *to, float t, uint32_t w,
+			  uint32_t h, bool linear, float pad)
 {
 	fx_set_vec2(e, "uv_size", (float)w, (float)h);
 	fx_set_float(e, "linear_input", linear ? 1.0f : 0.0f);
@@ -317,7 +317,7 @@ static void set_common(fx_filter_t *fx, gs_effect_t *e, obs_data_t *settings, ob
 
 void fx_filter_render(fx_filter_t *fx)
 {
-	if (!ensure_effect(fx)) {
+	if (!fx_filter_ensure_effect(fx)) {
 		if (fx->is_filter)
 			obs_source_skip_video_filter(fx->context);
 		return;
@@ -329,7 +329,7 @@ void fx_filter_render(fx_filter_t *fx)
 	if (!fx->is_filter) {
 		const uint32_t w = fx->width, h = fx->height;
 		if (w && h) {
-			set_common(fx, fx->effect, settings, NULL, 0.0f, w, h, true, 0.0f);
+			fx_filter_set_common(fx, fx->effect, settings, NULL, 0.0f, w, h, true, 0.0f);
 			const bool previous = gs_framebuffer_srgb_enabled();
 			gs_enable_framebuffer_srgb(true);
 			while (gs_effect_loop(fx->effect, tech))
@@ -373,7 +373,7 @@ void fx_filter_render(fx_filter_t *fx)
 		// gs_get_linear_srgb() says here.
 		const bool linear = (obs_source_get_output_flags(fx->context) & OBS_SOURCE_SRGB) != 0 ||
 				    gs_get_linear_srgb();
-		set_common(fx, fx->effect, settings, to_settings, t, ow, oh, linear, (float)pad);
+		fx_filter_set_common(fx, fx->effect, settings, to_settings, t, ow, oh, linear, (float)pad);
 		gs_blend_state_push();
 		gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
 		gs_matrix_push();

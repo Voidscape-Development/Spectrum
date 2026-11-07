@@ -70,6 +70,12 @@ void fx_filter_update(fx_filter_t *fx, obs_data_t *settings);
 void fx_filter_tick(fx_filter_t *fx, float seconds);
 void fx_filter_render(fx_filter_t *fx);
 
+// For effects with their own render pipeline: loads the effect (graphics
+// thread), and sets the shared and settings-bound uniforms.
+bool fx_filter_ensure_effect(fx_filter_t *fx);
+void fx_filter_set_common(fx_filter_t *fx, gs_effect_t *effect, obs_data_t *settings, obs_data_t *to, float t,
+			  uint32_t width, uint32_t height, bool linear, float pad);
+
 // A new reference to the current settings snapshot (release it).
 obs_data_t *fx_filter_settings(fx_filter_t *fx);
 

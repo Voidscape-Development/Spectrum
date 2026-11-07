@@ -170,6 +170,7 @@ target_sources(
     src/fx/color-tools.c
     src/fx/distort.c
     src/fx/stylize.c
+    src/fx/light.c
     src/fx/shape-source.c
     src/fx/noise-source.c
     src/animate/animate-filter.c
