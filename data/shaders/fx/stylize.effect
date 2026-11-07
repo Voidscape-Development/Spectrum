@@ -1,0 +1,193 @@
+// Spectrum Stylize: a stack of looks, each off at zero: glitch, CRT
+// curvature, chromatic aberration, posterize, halftone, scanlines, film
+// grain and vignette.
+#include "fx-common.effect"
+
+// Glitch
+uniform float st_glitch = 0.0;        // %
+uniform float st_glitch_block = 24.0; // px
+uniform float st_glitch_speed = 8.0;  // changes per second
+// CRT
+uniform float st_crt_curve = 0.0;     // %
+// Chromatic aberration
+uniform float st_ca = 0.0;            // px
+uniform bool st_ca_radial;
+uniform float st_ca_angle = 0.0;      // degrees (linear mode)
+// Posterize
+uniform float st_posterize = 0.0;     // levels, 0 = off
+uniform bool st_posterize_dither;
+// Halftone
+uniform float st_halftone = 0.0;      // %
+uniform float st_halftone_size = 8.0; // px
+uniform float st_halftone_angle = 45.0;
+uniform bool st_halftone_cmyk;
+// Scanlines
+uniform float st_scanlines = 0.0;     // %
+uniform float st_scanline_size = 3.0; // px
+// Grain
+uniform float st_grain = 0.0;         // %
+uniform float st_grain_size = 1.5;    // px
+// Vignette
+uniform float st_vignette = 0.0;      // %
+uniform float st_vignette_size = 60.0;     // %
+uniform float st_vignette_softness = 50.0; // %
+uniform float4 st_vignette_color;
+
+float4 sample_at(float2 uv)
+{
+	return fx_input(uv);
+}
+
+float halftone_channel(float2 pix, float value, float angle_deg)
+{
+	float a = angle_deg * PI / 180.0;
+	float cs = cos(a);
+	float sn = sin(a);
+	float2 p = float2(cs * pix.x + sn * pix.y, -sn * pix.x + cs * pix.y) / max(st_halftone_size, 1.0);
+	float2 cell = frac(p) - 0.5;
+	// Dot area matches the value: radius = sqrt(value / pi) cells.
+	float r = sqrt(saturate(value) / PI) * 1.05;
+	float d = length(cell) - r;
+	float aa = length(float2(ddx(d), ddy(d))) + 1e-4;
+	return saturate(0.5 - d / aa);
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	float2 pix = uv * uv_size;
+
+	// CRT curvature: barrel warp of the whole picture.
+	float edge_mask = 1.0;
+	if (st_crt_curve > 0.0) {
+		float2 c = uv * 2.0 - 1.0;
+		float k = st_crt_curve / 100.0 * 0.25;
+		c *= 1.0 + k * dot(c, c);
+		uv = c * 0.5 + 0.5;
+		float2 inside = step(float2(0.0, 0.0), uv) * step(uv, float2(1.0, 1.0));
+		edge_mask = inside.x * inside.y;
+	}
+
+	// Glitch: horizontal block shifts that change at a set rate.
+	float split = 0.0;
+	if (st_glitch > 0.0) {
+		float g = st_glitch / 100.0;
+		float t = floor(time * st_glitch_speed);
+		float row = floor(pix.y / max(st_glitch_block, 1.0));
+		float h = hash12(float2(row, t));
+		if (h < g * 0.6) {
+			float shift = (hash12(float2(row + 3.1, t + 7.7)) - 0.5) * 2.0 * g * 0.15;
+			// Wrap around, like a horizontal sync glitch.
+			uv.x = frac(uv.x + shift);
+			split = abs(shift) * uv_size.x * 0.25;
+		}
+	}
+
+	// Chromatic aberration (plus glitch RGB split).
+	float4 c;
+	float amount = st_ca + split;
+	if (amount > 0.0) {
+		float2 dir;
+		if (st_ca_radial) {
+			dir = (uv - 0.5) * uv_size;
+			float l = length(dir);
+			dir = l > 1e-3 ? dir / l * (l / (0.5 * length(uv_size))) : float2(0.0, 0.0);
+		} else {
+			float a = st_ca_angle * PI / 180.0;
+			dir = float2(cos(a), sin(a));
+		}
+		float2 o = dir * amount / uv_size;
+		float4 r = sample_at(uv + o);
+		float4 g = sample_at(uv);
+		float4 b = sample_at(uv - o);
+		c = float4(r.r, g.g, b.b, max(max(r.a, g.a), b.a));
+	} else {
+		c = sample_at(uv);
+	}
+
+	// Posterize.
+	if (st_posterize >= 2.0) {
+		float n = st_posterize - 1.0;
+		float d = 0.0;
+		if (st_posterize_dither) {
+			// 4x4 ordered dither between levels.
+			float2 q = floor(pix) - 4.0 * floor(floor(pix) / 4.0);
+			float bayer = 0.0;
+			int ix = int(q.x);
+			int iy = int(q.y);
+			int idx = iy * 4 + ix;
+			if (idx == 0) bayer = 0.0;
+			else if (idx == 1) bayer = 8.0;
+			else if (idx == 2) bayer = 2.0;
+			else if (idx == 3) bayer = 10.0;
+			else if (idx == 4) bayer = 12.0;
+			else if (idx == 5) bayer = 4.0;
+			else if (idx == 6) bayer = 14.0;
+			else if (idx == 7) bayer = 6.0;
+			else if (idx == 8) bayer = 3.0;
+			else if (idx == 9) bayer = 11.0;
+			else if (idx == 10) bayer = 1.0;
+			else if (idx == 11) bayer = 9.0;
+			else if (idx == 12) bayer = 15.0;
+			else if (idx == 13) bayer = 7.0;
+			else if (idx == 14) bayer = 13.0;
+			else bayer = 5.0;
+			d = (bayer + 0.5) / 16.0 - 0.5;
+		}
+		c.rgb = floor(c.rgb * n + 0.5 + d) / n;
+	}
+
+	// Halftone.
+	if (st_halftone > 0.0) {
+		float3 ht;
+		if (st_halftone_cmyk) {
+			float k = 1.0 - max(c.r, max(c.g, c.b));
+			float3 cmy = k < 1.0 ? (1.0 - c.rgb - k) / (1.0 - k) : float3(0.0, 0.0, 0.0);
+			float dc = halftone_channel(pix, cmy.x, st_halftone_angle + 15.0);
+			float dm = halftone_channel(pix, cmy.y, st_halftone_angle + 75.0);
+			float dy = halftone_channel(pix, cmy.z, st_halftone_angle);
+			float dk = halftone_channel(pix, k, st_halftone_angle + 45.0);
+			ht = (1.0 - float3(dc, dm, dy)) * (1.0 - dk);
+		} else {
+			float ink = halftone_channel(pix, 1.0 - luma(c.rgb), st_halftone_angle);
+			ht = float3(1.0, 1.0, 1.0) * (1.0 - ink);
+		}
+		c.rgb = lerp(c.rgb, ht, saturate(st_halftone / 100.0));
+	}
+
+	// Scanlines.
+	if (st_scanlines > 0.0) {
+		float s = 0.5 + 0.5 * cos(pix.y / max(st_scanline_size, 1.0) * TAU);
+		c.rgb *= 1.0 - st_scanlines / 100.0 * s * 0.8;
+	}
+
+	// Film grain (luminance, in encoded units).
+	if (st_grain > 0.0) {
+		float2 gp = pix / max(st_grain_size, 1.0) + floor(time * 24.0) * float2(37.1, 17.3);
+		float n = value_noise(gp) + value_noise(gp * 2.1 + 3.7) - 1.0;
+		c.rgb = saturate(c.rgb + n * st_grain / 100.0 * 0.25);
+	}
+
+	// Vignette.
+	if (st_vignette > 0.0) {
+		float2 d = (v_in.uv - 0.5) * 2.0;
+		d.x *= uv_size.x / uv_size.y;
+		float r = length(d) / length(float2(uv_size.x / uv_size.y, 1.0));
+		float size = st_vignette_size / 100.0;
+		float soft = max(st_vignette_softness / 100.0, 0.01);
+		float v = smoothstep(size - soft * 0.5, size + soft * 0.5, r) * st_vignette / 100.0;
+		c.rgb = lerp(c.rgb, st_vignette_color.rgb, v * st_vignette_color.a);
+	}
+
+	c *= edge_mask;
+	return fx_output(c, v_in.uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}
