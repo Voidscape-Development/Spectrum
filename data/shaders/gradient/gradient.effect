@@ -1,0 +1,328 @@
+// Spectrum gradient.
+//
+// The color stops are pre-baked into `lut` (RGBA32F, linear sRGB, straight
+// alpha) by the CPU. It is read with point sampling and interpolated here in
+// float, so nothing is quantised before the final output, which is dithered
+// with triangular noise sized to the render target's bit depth.
+
+uniform float4x4 ViewProj;
+uniform texture2d lut;
+uniform float lut_size;
+
+uniform float2 size;       // output size, px
+uniform float2 center;     // px
+uniform float2 axis;       // (cos, sin) of the rotation
+uniform float2 inv_radius; // shape scale, 1 / px
+uniform float2 focal;      // focal point of radial shapes, unit circle space
+uniform int shape;
+uniform int repeat_mode;
+uniform float offset;
+uniform float repetitions;
+uniform float twist;
+uniform float hue_shift; // radians
+
+uniform float4 corner_tl;
+uniform float4 corner_tr;
+uniform float4 corner_bl;
+uniform float4 corner_br;
+uniform int corner_space; // 0 sRGB, 1 linear sRGB, 2 Oklab
+uniform float corner_smooth;
+
+uniform float opacity;
+uniform float grain_amount;
+uniform float grain_size;
+uniform float grain_seed;
+uniform float dither_step; // one step of the target in encoded units, or 0
+
+sampler_state pointSampler {
+	Filter   = Point;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv = v_in.uv;
+	return vert_out;
+}
+
+#define PI 3.14159265358979
+#define SHAPE_LINEAR 1
+#define SHAPE_REFLECTED 2
+#define SHAPE_RADIAL 3
+#define SHAPE_ELLIPTICAL 4
+#define SHAPE_CONIC 5
+#define SHAPE_SPIRAL 6
+#define SHAPE_DIAMOND 7
+#define SHAPE_CORNERS 8
+#define REPEAT_PAD 1
+#define REPEAT_REPEAT 2
+#define REPEAT_MIRROR 3
+
+/* Color ---------------------------------------------------------------- */
+
+float srgb_to_linear_channel(float u)
+{
+	return (u <= 0.04045) ? (u / 12.92) : pow((u + 0.055) / 1.055, 2.4);
+}
+
+float3 srgb_to_linear(float3 v)
+{
+	return float3(srgb_to_linear_channel(v.r), srgb_to_linear_channel(v.g), srgb_to_linear_channel(v.b));
+}
+
+float linear_to_srgb_channel(float u)
+{
+	return (u <= 0.0031308) ? (12.92 * u) : ((1.055 * pow(max(u, 0.0), 1.0 / 2.4)) - 0.055);
+}
+
+float3 linear_to_srgb(float3 v)
+{
+	return float3(linear_to_srgb_channel(v.r), linear_to_srgb_channel(v.g), linear_to_srgb_channel(v.b));
+}
+
+float3 linear_to_oklab(float3 c)
+{
+	float l = 0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b;
+	float m = 0.2119034982 * c.r + 0.6806995451 * c.g + 0.1073969566 * c.b;
+	float s = 0.0883024619 * c.r + 0.2817188376 * c.g + 0.6299787005 * c.b;
+	float3 lms = pow(max(float3(l, m, s), float3(0.0, 0.0, 0.0)), float3(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0));
+	return float3(0.2104542553 * lms.x + 0.7936177850 * lms.y - 0.0040720468 * lms.z,
+		      1.9779984951 * lms.x - 2.4285922050 * lms.y + 0.4505937099 * lms.z,
+		      0.0259040371 * lms.x + 0.7827717662 * lms.y - 0.8086757660 * lms.z);
+}
+
+float3 oklab_to_linear(float3 c)
+{
+	float l_ = c.x + 0.3963377774 * c.y + 0.2158037573 * c.z;
+	float m_ = c.x - 0.1055613458 * c.y - 0.0638541728 * c.z;
+	float s_ = c.x - 0.0894841775 * c.y - 1.2914855480 * c.z;
+	float l = l_ * l_ * l_;
+	float m = m_ * m_ * m_;
+	float s = s_ * s_ * s_;
+	return float3(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+		      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+		      -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+}
+
+/* Noise ---------------------------------------------------------------- */
+
+// Interleaved gradient noise: cheap, well distributed, no sin().
+float ign(float2 p)
+{
+	return frac(52.9829189 * frac(0.06711056 * p.x + 0.00583715 * p.y));
+}
+
+// Triangular (TPDF) noise in [-1, 1]: removes banding without the
+// brightness dependent noise of plain uniform dither.
+float tpdf(float2 p)
+{
+	return ign(p) + ign(p * 1.37 + float2(47.3, 13.9)) - 1.0;
+}
+
+float hash12(float2 p)
+{
+	float3 p3 = frac(float3(p.x, p.y, p.x) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return frac((p3.x + p3.y) * p3.z);
+}
+
+float value_noise(float2 p)
+{
+	float2 i = floor(p);
+	float2 f = frac(p);
+	float2 u = f * f * (3.0 - 2.0 * f);
+	float a = hash12(i);
+	float b = hash12(i + float2(1.0, 0.0));
+	float c = hash12(i + float2(0.0, 1.0));
+	float d = hash12(i + float2(1.0, 1.0));
+	return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+
+/* Gradient parameter -------------------------------------------------- */
+
+float4 lut_at(float t)
+{
+	float x = saturate(t) * (lut_size - 1.0);
+	float i0 = floor(x);
+	float i1 = min(i0 + 1.0, lut_size - 1.0);
+	float4 a = lut.Sample(pointSampler, float2((i0 + 0.5) / lut_size, 0.5));
+	float4 b = lut.Sample(pointSampler, float2((i1 + 0.5) / lut_size, 0.5));
+	return lerp(a, b, x - i0);
+}
+
+float radial_t(float2 q)
+{
+	float2 d = q - focal;
+	float dl = length(d);
+	if (dl < 1e-6)
+		return 0.0;
+	float2 n = d / dl;
+	float b = dot(focal, n);
+	float c = dot(focal, focal) - 1.0;
+	float s = -b + sqrt(max(b * b - c, 0.0));
+	return dl / max(s, 1e-6);
+}
+
+// Raw gradient parameter (before repeat) in x. For conic shapes y gets the
+// same parameter with the angular seam moved half a turn away, so the
+// derivative can be measured without the jump at the seam.
+float2 shape_t(float2 pix)
+{
+	float2 d = pix - center;
+	// Rotate into gradient space.
+	float2 r = float2(d.x * axis.x + d.y * axis.y, -d.x * axis.y + d.y * axis.x);
+	float2 q = r * inv_radius;
+	float t = 0.0;
+	float alt = 0.0;
+
+	if (shape == SHAPE_LINEAR) {
+		t = q.x + 0.5;
+	} else if (shape == SHAPE_REFLECTED) {
+		t = abs(q.x);
+	} else if (shape == SHAPE_RADIAL || shape == SHAPE_ELLIPTICAL) {
+		t = radial_t(q);
+	} else if (shape == SHAPE_DIAMOND) {
+		t = abs(q.x) + abs(q.y);
+	} else {
+		float a = atan2(q.y, q.x) / (2.0 * PI); // -0.5 .. 0.5
+		float a0 = frac(a + 1.0);               // seam at the start angle
+		float a1 = a + 0.5;                     // seam half a turn away
+		float spiral = shape == SHAPE_SPIRAL ? twist * length(q) : 0.0;
+		t = (a0 + spiral) * repetitions;
+		alt = (a1 + spiral) * repetitions;
+	}
+	return float2(t + offset, alt);
+}
+
+float4 gradient_color(float2 pix)
+{
+	float2 ts = shape_t(pix);
+	float t = ts.x;
+	float alt = ts.y;
+	bool conic = shape == SHAPE_CONIC || shape == SHAPE_SPIRAL;
+
+	// Width of this pixel in gradient units, to anti-alias hard seams.
+	float w = abs(ddx(t)) + abs(ddy(t));
+	if (conic) {
+		float w_alt = abs(ddx(alt)) + abs(ddy(alt));
+		w = min(w, w_alt);
+	}
+
+	if (repeat_mode == REPEAT_PAD)
+		return lut_at(t);
+
+	if (repeat_mode == REPEAT_MIRROR) {
+		float m = 1.0 - abs(frac(t * 0.5) * 2.0 - 1.0);
+		return lut_at(m);
+	}
+
+	// Repeat: blend across the wrap seam by pixel coverage.
+	float f = frac(t);
+	float4 c = lut_at(f);
+	float hw = clamp(w * 0.5, 0.0, 0.5);
+	if (hw > 0.0) {
+		if (f < hw) {
+			float k = (hw - f) / (2.0 * hw);
+			c = lerp(c, lut_at(1.0), k);
+		} else if (f > 1.0 - hw) {
+			float k = (f - (1.0 - hw)) / (2.0 * hw);
+			c = lerp(c, lut_at(0.0), k);
+		}
+	}
+	return c;
+}
+
+float4 corners_color(float2 uv)
+{
+	float2 k = saturate(uv);
+	if (corner_smooth > 0.5)
+		k = k * k * (3.0 - 2.0 * k);
+	float4 top = lerp(corner_tl, corner_tr, k.x);
+	float4 bottom = lerp(corner_bl, corner_br, k.x);
+	float4 c = lerp(top, bottom, k.y);
+	float3 v = c.a > 1e-6 ? c.rgb / c.a : float3(0.0, 0.0, 0.0);
+	float3 lin;
+	if (corner_space == 0)
+		lin = srgb_to_linear(saturate(v));
+	else if (corner_space == 1)
+		lin = v;
+	else
+		lin = oklab_to_linear(v);
+	return float4(saturate(lin), saturate(c.a));
+}
+
+// The finished color, sRGB encoded, straight alpha, before dithering.
+float4 shade(VertData v_in)
+{
+	float2 pix = v_in.uv * size;
+	float4 c = shape == SHAPE_CORNERS ? corners_color(v_in.uv) : gradient_color(pix);
+
+	if (hue_shift != 0.0) {
+		float3 lab = linear_to_oklab(c.rgb);
+		float cs = cos(hue_shift);
+		float sn = sin(hue_shift);
+		lab.yz = float2(lab.y * cs - lab.z * sn, lab.y * sn + lab.z * cs);
+		c.rgb = saturate(oklab_to_linear(lab));
+	}
+
+	float3 enc = linear_to_srgb(c.rgb);
+
+	if (grain_amount > 0.0) {
+		float2 gp = pix / grain_size + grain_seed * float2(17.17, 31.31);
+		float n = (value_noise(gp) + value_noise(gp * 1.93 + 7.7)) - 1.0;
+		enc = saturate(enc + n * grain_amount);
+	}
+
+	return float4(enc, c.a * opacity);
+}
+
+// Source output: linear, encoded by the sRGB framebuffer. Dithering happens
+// in encoded units so it lines up with the target's quantisation steps.
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float4 c = shade(v_in);
+	if (dither_step > 0.0) {
+		float2 p = floor(v_in.uv * size);
+		c.r += tpdf(p) * dither_step;
+		c.g += tpdf(p + float2(19.0, 7.0)) * dither_step;
+		c.b += tpdf(p + float2(3.0, 23.0)) * dither_step;
+		c.a += tpdf(p + float2(29.0, 11.0)) * dither_step;
+		c = saturate(c);
+	}
+	return float4(srgb_to_linear(c.rgb), c.a);
+}
+
+// Fill texture for the stroke/glow/shadow shaders: sRGB encoded,
+// premultiplied in linear space, like a rendered fill source.
+float4 PSDrawFill(VertData v_in) : TARGET
+{
+	float4 c = shade(v_in);
+	float3 lin = srgb_to_linear(c.rgb) * c.a;
+	return float4(linear_to_srgb(lin), c.a);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}
+
+technique DrawFill
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDrawFill(v_in);
+	}
+}

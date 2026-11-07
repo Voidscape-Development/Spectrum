@@ -147,4 +147,15 @@ target_sources(
     src/masks/utils.h
 )
 
+# Gradient
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/gradient/gradient.c
+    src/gradient/gradient.h
+    src/gradient/gradient-editor.cpp
+    src/gradient/gradient-editor.hpp
+    src/gradient/gradient-source.c
+)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

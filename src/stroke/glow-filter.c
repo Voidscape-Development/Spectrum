@@ -97,6 +97,7 @@ static glow_filter_data_t *filter_create(obs_source_t *source)
 
 	source_ref_init(&filter->input_ref);
 	source_ref_init(&filter->fill_ref);
+	gradient_init(&filter->gradient, source, GLOW_GRADIENT_PREFIX);
 	filter->context = source;
 	filter->input_texture_generated = false;
 	filter->alpha_blur_data = bzalloc(sizeof(alpha_blur_data_t));
@@ -152,6 +153,7 @@ static void glow_filter_destroy(void *data)
 
 	source_ref_free(&filter->input_ref);
 	source_ref_free(&filter->fill_ref);
+	gradient_free(&filter->gradient);
 	bfree(filter->alpha_blur_data);
 	bfree(filter);
 }
@@ -240,6 +242,7 @@ static void glow_filter_update(void *data, obs_data_t *settings)
 	}
 
 	source_ref_set_name(&filter->fill_ref, obs_data_get_string(settings, "glow_fill_source"));
+	gradient_update(&filter->gradient, settings);
 
 	if (filter->reload) {
 		filter->reload = false;
@@ -406,6 +409,8 @@ static obs_properties_t *properties(void *data, bool is_source, enum filter_type
 				  GLOW_FILL_TYPE_COLOR);
 	obs_property_list_add_int(glow_fill_method_list, obs_module_text(GLOW_FILL_TYPE_SOURCE_LABEL),
 				  GLOW_FILL_TYPE_SOURCE);
+	obs_property_list_add_int(glow_fill_method_list, obs_module_text(GLOW_FILL_TYPE_GRADIENT_LABEL),
+				  GLOW_FILL_TYPE_GRADIENT);
 	//obs_property_list_add_int(
 	//	glow_fill_method_list,
 	//	obs_module_text(GLOW_FILL_TYPE_IMAGE_LABEL),
@@ -424,6 +429,8 @@ static obs_properties_t *properties(void *data, bool is_source, enum filter_type
 	obs_enum_sources(stroke_add_source_to_list, glow_fill_source_source);
 	obs_enum_scenes(stroke_add_source_to_list, glow_fill_source_source);
 	obs_property_list_insert_string(glow_fill_source_source, 0, "None", "");
+
+	gradient_properties(props, GLOW_GRADIENT_PREFIX, data ? &((glow_filter_data_t *)data)->gradient : NULL);
 
 	return props;
 }
@@ -453,6 +460,7 @@ static void glow_filter_video_tick(void *data, float seconds)
 	glow_filter_data_t *filter = data;
 
 	source_ref_tick(&filter->fill_ref, seconds);
+	gradient_tick(&filter->gradient, seconds);
 	if (filter->is_source) {
 		source_ref_tick(&filter->input_ref, seconds);
 	}
@@ -510,6 +518,7 @@ static void glow_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "glow_offset_distance", 0.0);
 	obs_data_set_default_double(settings, "threshold_outer", 100.0);
 	obs_data_set_default_double(settings, "threshold_inner", 0.0);
+	gradient_defaults(settings, GLOW_GRADIENT_PREFIX);
 }
 
 static void shadow_filter_defaults(obs_data_t *settings)
@@ -525,6 +534,7 @@ static void shadow_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "ignore_source_border", true);
 	obs_data_set_default_double(settings, "threshold_outer", 100.0);
 	obs_data_set_default_double(settings, "threshold_inner", 0.0);
+	gradient_defaults(settings, GLOW_GRADIENT_PREFIX);
 }
 
 // Defaults for filters/sources created by this version: pad automatically
@@ -570,6 +580,10 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 {
 	UNUSED_PARAMETER(p);
 	enum glow_fill_type fill_type = (enum glow_fill_type)obs_data_get_int(settings, "glow_fill_type");
+	gradient_set_visible(props, GLOW_GRADIENT_PREFIX, fill_type == GLOW_FILL_TYPE_GRADIENT);
+	if (fill_type == GLOW_FILL_TYPE_GRADIENT) {
+		gradient_refresh_visibility(props, GLOW_GRADIENT_PREFIX, settings);
+	}
 	switch (fill_type) {
 	case GLOW_FILL_TYPE_COLOR:
 		stroke_setting_visibility("glow_fill_color", true, props);
@@ -585,6 +599,11 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 		stroke_setting_visibility("glow_fill_color", false, props);
 		stroke_setting_visibility("glow_fill_source", false, props);
 		stroke_setting_visibility("glow_fill_image", true, props);
+		break;
+	case GLOW_FILL_TYPE_GRADIENT:
+		stroke_setting_visibility("glow_fill_color", false, props);
+		stroke_setting_visibility("glow_fill_source", false, props);
+		stroke_setting_visibility("glow_fill_image", false, props);
 		break;
 	}
 	return true;

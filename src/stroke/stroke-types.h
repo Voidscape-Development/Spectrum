@@ -4,17 +4,21 @@
 #include "defines.h"
 #include <util/dstr.h>
 #include "obs-utils.h"
+#include "../gradient/gradient.h"
 
 #define DEFAULT_COLOR 4294967295
 
 #define STROKE_FILL_TYPE_COLOR_LABEL "StrokeFilter.ColorFill"
 #define STROKE_FILL_TYPE_SOURCE_LABEL "StrokeFilter.SourceFill"
 #define STROKE_FILL_TYPE_IMAGE_LABEL "StrokeFilter.ImageFill"
+#define STROKE_FILL_TYPE_GRADIENT_LABEL "StrokeFilter.GradientFill"
+#define STROKE_GRADIENT_PREFIX "stroke_gradient_"
 
 enum stroke_fill_type {
 	STROKE_FILL_TYPE_COLOR = 1,
 	STROKE_FILL_TYPE_SOURCE,
 	STROKE_FILL_TYPE_IMAGE,
+	STROKE_FILL_TYPE_GRADIENT,
 };
 
 #define STROKE_POSITION_OUTER_LABEL "StrokeFilter.StrokePositionOuter"
@@ -43,6 +47,8 @@ struct stroke_filter_data {
 	// Cached render targets for the two sources above.
 	gs_texrender_t *source_texrender;
 	gs_texrender_t *fill_texrender;
+	// Gradient fill.
+	gradient_t gradient;
 
 	bool is_filter;
 	bool is_source;

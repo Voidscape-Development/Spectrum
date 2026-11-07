@@ -37,6 +37,9 @@ extern struct obs_source_info spectrum_shadow_source;
 /* Masks */
 extern struct obs_source_info spectrum_mask_filter;
 
+/* Gradient */
+extern struct obs_source_info spectrum_gradient_source;
+
 /* Optional hook provided by the Move Transition plugin, shared by the
  * blur and mask filters so they can interpolate between filter states. */
 float (*move_get_transition_filter)(obs_source_t *filter_from, obs_source_t **filter_to) = NULL;
@@ -63,6 +66,8 @@ bool obs_module_load(void)
 	obs_register_source(&spectrum_shadow_source);
 
 	obs_register_source(&spectrum_mask_filter);
+
+	obs_register_source(&spectrum_gradient_source);
 
 	obs_log(LOG_INFO, "loaded version %s", PLUGIN_VERSION);
 	return true;

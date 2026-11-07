@@ -27,6 +27,19 @@ Each one is available as a filter on a source, or as a standalone source that dr
 - **Chroma key** and an alpha-wipe mask for transitions.
 - **Alpha or adjustment mode:** a mask either cuts the source out, or applies brightness, contrast, saturation and hue adjustments inside it.
 
+### Spectrum Gradient (source)
+A gradient source built to never band, with plenty of control.
+
+- **Shapes:** linear, reflected, radial (with a movable focal point), elliptical, conic, spiral, diamond and a free-form four-corner blend.
+- **Color stops editor:** click to add stops, drag to move them, drag down to remove them, and drag the midpoint diamonds between stops. Each segment has its own easing (linear, smooth, ease in/out, step). Includes built-in presets, and you can save your own.
+- **Color blending:** Oklab (perceptual, the default), OkLCh hue paths (shorter, longer, increasing, decreasing), linear RGB or classic sRGB. Colors that would fall outside sRGB are brought back in by reducing chroma, not by clipping.
+- **Extend modes:** pad, repeat and mirror, with anti-aliased seams.
+- **Animation:** rotation, scrolling and hue cycling, plus a static hue shift.
+- **Finish:** opacity and optional film grain.
+- **No banding:** stops are baked into a 32-bit float lookup table and blended in float. Only the final output is quantised, and it gets triangular-noise dither sized to the render target (8 or 10 bit). On HDR and float canvases the gradient renders in float and needs no dither.
+
+The same gradient engine is available as a **Gradient** fill type in Spectrum Stroke, Glow and Shadow.
+
 When the Move Transition plugin is installed, the blur and mask filters can be animated between two filter states.
 
 ## Building
