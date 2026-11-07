@@ -86,6 +86,13 @@ struct glow_filter_data {
 	bool rendering;
 	bool reload;
 	bool rendered;
+	// Result caching for static inputs: keep the last result until the
+	// settings or size change (or every cache_refresh seconds).
+	bool cache;
+	float cache_refresh;
+	float cache_timer;
+	bool cache_valid;
+	uint32_t cache_w, cache_h;
 
 	uint32_t width;
 	uint32_t height;

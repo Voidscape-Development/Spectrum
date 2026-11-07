@@ -245,6 +245,9 @@ static void glow_filter_update(void *data, obs_data_t *settings)
 
 	source_ref_set_name(&filter->fill_ref, obs_data_get_string(settings, "glow_fill_source"));
 	gradient_update(&filter->gradient, settings);
+	filter->cache = obs_data_get_bool(settings, "cache_result");
+	filter->cache_refresh = (float)obs_data_get_double(settings, "cache_refresh");
+	filter->cache_valid = false;
 
 	if (filter->reload) {
 		filter->reload = false;
@@ -307,6 +310,9 @@ static void glow_filter_render_impl(void *data, gs_effect_t *effect)
 	glow_render_cropped_output(filter);
 
 	filter->rendered = true;
+	filter->cache_valid = true;
+	filter->cache_w = filter->output_width;
+	filter->cache_h = filter->output_height;
 	filter->rendering = false;
 }
 
@@ -459,6 +465,11 @@ static obs_properties_t *properties(void *data, bool is_source, enum filter_type
 
 	gradient_properties(props, GLOW_GRADIENT_PREFIX, data ? &((glow_filter_data_t *)data)->gradient : NULL);
 
+	obs_property_t *cache_p = obs_properties_add_bool(props, "cache_result", obs_module_text("Cache.Result"));
+	obs_property_set_long_description(cache_p, obs_module_text("Cache.Result.Description"));
+	obs_property_t *refresh_p = obs_properties_add_float_slider(props, "cache_refresh",
+								    obs_module_text("Cache.Refresh"), 0.0, 60.0, 0.1);
+	obs_property_float_set_suffix(refresh_p, "s");
 	spectrum_presets_properties(props, data ? ((glow_filter_data_t *)data)->context : NULL);
 	return props;
 }
@@ -532,7 +543,18 @@ static void glow_filter_video_tick(void *data, float seconds)
 		filter->output_width = base_width + filter->pad_l + filter->pad_r;
 		filter->output_height = base_height + filter->pad_t + filter->pad_b;
 	}
-	filter->rendered = false;
+	// With caching, keep the last result while it is still valid.
+	bool keep = filter->cache && filter->cache_valid && filter->output_width == filter->cache_w &&
+		    filter->output_height == filter->cache_h && !gradient_is_animated(&filter->gradient);
+	if (keep && filter->cache_refresh > 0.0f) {
+		filter->cache_timer += seconds;
+		if (filter->cache_timer >= filter->cache_refresh) {
+			filter->cache_timer = 0.0f;
+			keep = false;
+		}
+	}
+	if (!keep)
+		filter->rendered = false;
 }
 
 static void glow_filter_defaults(obs_data_t *settings)
