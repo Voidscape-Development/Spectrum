@@ -1,6 +1,6 @@
 # Spectrum
 
-Spectrum is a collection of video filters and sources for OBS Studio.
+Spectrum is a collection of video filters and sources for OBS Studio. Everything that draws smooth tones works in float and dithers its output, so gradients, glows and grades don't band.
 
 ## Features
 
@@ -38,9 +38,36 @@ A gradient source built to never band, with plenty of control.
 - **Finish:** opacity and optional film grain.
 - **No banding:** stops are baked into a 32-bit float lookup table and blended in float. Only the final output is quantised, and it gets triangular-noise dither sized to the render target (8 or 10 bit). On HDR and float canvases the gradient renders in float and needs no dither.
 
-The same gradient engine is available as a **Gradient** fill type in Spectrum Stroke, Glow and Shadow.
+The same gradient engine is available as fills elsewhere: **Gradient** and **Gradient Across Stroke** in Spectrum Stroke, **Gradient** and **Gradient by Glow Strength** in Glow and Shadow, plus the Shape, Noise, Gradient Map and Long Shadow effects below.
 
-When the Move Transition plugin is installed, the blur and mask filters can be animated between two filter states.
+### Spectrum Shape (source)
+Rectangles (rounded), ellipses, polygons, stars, hearts, rings and crosses, drawn as distance fields so the edges stay crisp at any size. Shapes can be rotated, stretched and rounded, and filled with a color, a gradient or another source. Each shape has its own stroke (inside, centered or outside) and a soft drop shadow.
+
+### Spectrum Noise (source)
+Animated procedural backgrounds such as lava, plasma, aurora, fog, marble and cells. Choose value, Perlin, simplex, cell or cell-edge noise, layered as smooth fBm, turbulence or ridged noise. Add domain warping, flow and evolution, then map the result through a gradient.
+
+### Spectrum Gradient Map (filter)
+Maps brightness, perceptual lightness or a single channel through a gradient, for duotones, thermal looks and stylized grades. It has black/white points, gamma, nine blend modes and an amount.
+
+### Spectrum Color Tools (filter)
+Exposure, temperature/tint, contrast, saturation and vibrance, levels, master and per-channel curves, HSL adjustments for eight color ranges, split toning, and 3D LUTs from `.cube` files.
+
+### Spectrum Long Shadow and Bevel & Emboss (filters)
+- **Long Shadow:** flat-design long shadows or a 3D extrusion along any direction. Fill with a color, a gradient along the length, or the source's own colors darkened with depth.
+- **Bevel & Emboss:** inner and outer bevels, emboss and pillow emboss, lit by a directional light.
+
+### Spectrum Distort, Stylize and Light (filters)
+- **Distort:** wave, ripple, twirl, bulge/pinch, animated noise displacement, and displacement by another source used as an offset map or as glass refraction.
+- **Stylize:** chromatic aberration, glitch, CRT curvature and scanlines, mono or CMYK halftone, posterize with optional ordered dither, film grain and vignette.
+- **Light:** bloom (a float blur pyramid), light rays, lens flare, and a point light that uses the source's alpha as a bump map.
+
+### Spectrum Animate (filter)
+Drives any numeric setting of any filter on a source, or of the source itself, from a looping waveform (sine, triangle, ramps, square, smooth random) or from the level of an audio source with attack and release. It works with OBS's built-in filters and with other plugins too.
+
+### Presets, transitions and performance
+- **Presets:** every Spectrum filter and source can save, load and delete named presets.
+- **Move Transition:** when the Move Transition plugin is installed, Blur, Mask, Stroke, Glow, Shadow and all the effects above (except Light) interpolate between two filter states.
+- **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame.
 
 ## Building
 
