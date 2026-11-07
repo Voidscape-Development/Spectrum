@@ -1,0 +1,316 @@
+// Shared by jump-flood-sdf.effect (filters) and jump-flood-sdf-source.effect
+// (sources): uniforms, samplers, the jump flood passes, and the helpers that
+// turn the resulting distance field into anti-aliased stroke/contour coverage.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform texture2d output_image;
+uniform texture2d overlay;
+uniform texture2d stroke_fill_source;
+// Nearest edge point for every pixel, from the jump flood.
+uniform texture2d distance_field;
+
+uniform float2 uv_size;
+
+// Mask alpha Threshold
+uniform float threshold;
+
+// Jump Flood Step Offset
+uniform float offset;
+
+uniform float stroke_offset;
+uniform float stroke_extent;
+uniform float4 stroke_fill_color;
+
+uniform float contour_offset;
+uniform float contour_spacing;
+uniform float contour_falloff_start;
+uniform float contour_falloff_end;
+uniform float contour_spacing_power;
+
+// For crop/padding
+uniform float2 mul_val;
+uniform float2 add_val;
+
+// Set when working in a float (non-SDR) color space: the crop/pad pass then
+// sRGB-encodes the linear input itself (extended range, so HDR values above
+// 1.0 survive and the rest of the pipeline is unchanged), and the output
+// pass skips the 8-bit dither and clamping.
+uniform float encode_input = 0.0;
+uniform float hdr_output = 0.0;
+
+// Value stored for pixels that have no nearest edge point (yet).
+#define NO_SEED 32000.0
+
+sampler_state sdfSampler {
+	Filter = Point;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	MinLOD = 0;
+	MaxLOD = 0;
+};
+
+sampler_state textureSampler {
+	Filter = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	MinLOD = 0;
+	MaxLOD = 0;
+};
+
+sampler_state padSampler {
+	Filter = Linear;
+	AddressU = Border;
+	AddressV = Border;
+	BorderColor = 00000000;
+};
+
+float srgb_nonlinear_to_linear_channel(float u)
+{
+	return (u <= 0.04045) ? (u / 12.92) : pow((u + 0.055) / 1.055, 2.4);
+}
+
+float4 srgb_nonlinear_to_linear(float4 v)
+{
+	return float4(srgb_nonlinear_to_linear_channel(v.r), srgb_nonlinear_to_linear_channel(v.g), srgb_nonlinear_to_linear_channel(v.b), v.a);
+}
+
+float srgb_linear_to_nonlinear_channel(float u)
+{
+	return (u <= 0.0031308) ? (12.92 * u) : ((1.055 * pow(u, 1. / 2.4)) - 0.055);
+}
+
+float4 srgb_linear_to_nonlinear(float4 v)
+{
+	return float4(srgb_linear_to_nonlinear_channel(v.r), srgb_linear_to_nonlinear_channel(v.g), srgb_linear_to_nonlinear_channel(v.b), v.a);
+}
+
+struct VertData
+{
+	float4 pos : POSITION;
+	float2 uv : TEXCOORD0;
+};
+
+VertData VSCrop(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv = v_in.uv * mul_val + add_val;
+	return vert_out;
+}
+
+VertData mainTransform(VertData v_in)
+{
+	v_in.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	return v_in;
+}
+
+// ---------------------------------------------------------------------------
+// Jump flood seeding
+//
+// Rather than seeding every pixel on one side of the threshold with its own
+// (integer) pixel centre, seed only the pixels that border the threshold
+// contour, and give each one the sub-pixel point on the contour nearest to
+// it. The contour is where the bilinearly reconstructed alpha equals the
+// threshold: each axis neighbour on the other side of the threshold gives a
+// crossing point by linear interpolation, and the pixel's alpha gradient gives
+// the local edge direction, so the seed is the foot of the perpendicular from
+// the pixel centre onto that edge. Distances measured to these points follow
+// the real (anti-aliased) shape of the source instead of its pixel grid, which
+// is what removes the stair-stepping from strokes, contours and their edges.
+//
+// Both sides of the contour are seeded, so a single field gives the distance
+// to the edge from inside and outside; the sign comes from the alpha test.
+//
+// Near 0% or 100% alpha the contour is badly conditioned: alpha saturates,
+// so a 100% threshold would put every seed back on an opaque pixel centre.
+// Seeds are therefore placed on a level clamped towards 50%, and the
+// distance is shifted by the difference (exact for a 1px anti-aliasing ramp,
+// which is what sources normally have).
+// ---------------------------------------------------------------------------
+
+#define SEED_LEVEL_MIN 0.2
+#define SEED_LEVEL_MAX 0.8
+
+float seed_level()
+{
+	return clamp(threshold, SEED_LEVEL_MIN, SEED_LEVEL_MAX);
+}
+
+float alpha_at(float2 coord)
+{
+	return image.Sample(textureSampler, coord / uv_size).a;
+}
+
+float4 drawSeedImage(VertData v_in) : TARGET
+{
+	float2 coord = v_in.uv * uv_size;
+	float level = seed_level();
+	float a0 = alpha_at(coord);
+	float a_l = alpha_at(coord + float2(-1.0, 0.0));
+	float a_r = alpha_at(coord + float2(1.0, 0.0));
+	float a_u = alpha_at(coord + float2(0.0, -1.0));
+	float a_d = alpha_at(coord + float2(0.0, 1.0));
+
+	float in0 = step(level, a0);
+	float4 a_n = float4(a_l, a_r, a_u, a_d);
+	// 1.0 for each neighbour on the other side of the seed level.
+	float4 cross_n = abs(step(float4(level, level, level, level), a_n) - float4(in0, in0, in0, in0));
+	float count = dot(cross_n, float4(1.0, 1.0, 1.0, 1.0));
+	if (count < 0.5)
+		return float4(NO_SEED, NO_SEED, 0.0, 0.0);
+
+	// Fraction of the way towards each neighbour where alpha == level.
+	float4 denom = float4(a0, a0, a0, a0) - a_n;
+	// Neighbours on the other side of the threshold never have the same
+	// alpha, so only the unused lanes need guarding against zero.
+	float4 safe_denom = cross_n * denom + (float4(1.0, 1.0, 1.0, 1.0) - cross_n);
+	float4 f = saturate((float4(a0, a0, a0, a0) - float4(level, level, level, level)) / safe_denom) * cross_n;
+	float2 crossing = float2(f.y - f.x, f.w - f.z) / count;
+
+	// Project the pixel centre onto the edge through the average crossing,
+	// using the alpha gradient as the edge normal.
+	float2 g = float2(a_r - a_l, a_d - a_u);
+	float g_len = length(g);
+	float2 n = g_len > 0.0001 ? g / g_len : float2(0.0, 0.0);
+	float2 rel = g_len > 0.0001 ? n * dot(crossing, n) : crossing;
+	float rel_len = length(rel);
+	rel = rel_len > 1.0 ? rel / rel_len : rel;
+
+	return float4(coord + rel, 0.0, 0.0);
+}
+
+float4 drawJumpFloodImage(VertData v_in) : TARGET
+{
+	float2 coord = v_in.uv * uv_size;
+	float minDist = 1.0e20;
+	float4 nearest = float4(NO_SEED, NO_SEED, 0.0, 0.0);
+
+	for (int x = -1; x <= 1; x++)
+	{
+		for (int y = -1; y <= 1; y++)
+		{
+			float4 coord_s = image.Sample(sdfSampler, (coord + (offset * float2(x, y))) / uv_size);
+			float2 d = coord - coord_s.xy;
+			float d2 = dot(d, d);
+			if (d2 < minDist)
+			{
+				minDist = d2;
+				nearest = float4(coord_s.xy, 0.0, 0.0);
+			}
+		}
+	}
+
+	return nearest;
+}
+
+// ---------------------------------------------------------------------------
+// Coverage helpers. Distances are in source pixels, and the stroke is drawn
+// 1:1 into a texture of the source's size, so an edge ramp one unit wide,
+// centred on the edge, is one pixel wide.
+// ---------------------------------------------------------------------------
+
+// Signed distance to the threshold contour: negative inside the shape.
+float signed_distance(float2 coord, float4 field, float alpha)
+{
+	float level = seed_level();
+	float d = distance(coord, field.xy);
+	return (step(level, alpha) > 0.5 ? -d : d) + (threshold - level);
+}
+
+// Anti-aliased coverage of the region x >= 0, for x in units of w pixels.
+float edge_cov(float x, float w)
+{
+	return saturate(x / w + 0.5);
+}
+
+// Coverage of an outer stroke band between stroke_offset and stroke_extent
+// outside the contour. With no offset the band continues a little under the
+// source so there is no seam where the source's own anti-aliasing begins.
+float outer_stroke_band(float sd)
+{
+	float inner_edge = stroke_offset > 0.0 ? stroke_offset : -1.0;
+	return edge_cov(stroke_extent - sd, 1.0) * edge_cov(sd - inner_edge, 1.0);
+}
+
+// Coverage of an inner stroke band at depth t_in (distance inside the
+// contour). The outer side is left to the shape mask, see inner_clip().
+float inner_stroke_band(float t_in)
+{
+	float near_edge = stroke_offset > 0.0 ? edge_cov(t_in - stroke_offset, 1.0) : 1.0;
+	return edge_cov(stroke_extent - t_in, 1.0) * near_edge;
+}
+
+// Mask of the shape used to clip inner strokes and contours. At the edge the
+// source's own alpha is the best anti-aliased mask there is; the distance
+// based term (pulled 1px inside the alpha == threshold contour, which for a
+// low threshold lies on the outside of the anti-aliasing) keeps the stroke
+// opaque over translucent parts of the source.
+float inner_clip(float sd, float alpha)
+{
+	return max(alpha, saturate(threshold - sd - 0.5));
+}
+
+// Repeating contour bands at distance d (>= 0) from the contour.
+float contour_bands(float d)
+{
+	float p = max(contour_spacing_power, 0.01);
+	float d_c = max(d, 0.0001);
+	float period = max(stroke_extent + contour_spacing, 0.0001);
+	float contour_d = pow(d_c, p) + contour_offset;
+	// The contour distance is warped by the spacing power, so size the
+	// anti-aliasing ramp from its derivative: one source pixel wide.
+	float w = clamp(p * pow(d_c, p - 1.0), 0.0001, period * 0.5);
+	float m = fmod(contour_d, period);
+	float band = edge_cov(m, w) * edge_cov(stroke_extent - m, w);
+	// Leading edge of the next band, just before m wraps around to 0.
+	float next_band = edge_cov(m - period, w);
+	return stroke_extent > 0.0 ? max(band, next_band) : 0.0;
+}
+
+float contour_falloff(float d)
+{
+	return 1.0 - smoothstep(contour_falloff_start, contour_falloff_end, d);
+}
+
+float rng(float2 p)
+{
+	return frac(52.9829189 * frac(0.06711056 * p.x + 0.00583715 * p.y));
+}
+
+// Dither for the 8-bit output, to break up banding in contour falloff
+// gradients. Kept just under +/-0.5 of an 8-bit step so values already on an
+// 8-bit level (unmodified source content) round back to the same value.
+float4 dither(float4 px, float2 uv)
+{
+	float2 pix = uv * uv_size;
+	float n_rgb = (rng(pix) - 0.5) * (0.96 / 255.0);
+	float n_a = (rng(pix + 17.13) - 0.5) * (0.96 / 255.0);
+	return saturate(px + float4(n_rgb, n_rgb, n_rgb, n_a));
+}
+
+// Straight-alpha "a over b".
+float4 blend_over(float4 a, float4 b)
+{
+	float out_a = a.a + b.a * (1.0 - a.a);
+	float3 premul = a.rgb * a.a + b.rgb * b.a * (1.0 - a.a);
+	return float4(out_a > 0.0 ? premul / out_a : float3(0.0, 0.0, 0.0), out_a);
+}
+
+technique DrawThreshold
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawSeedImage(v_in);
+	}
+}
+
+technique DrawJumpFloodStep
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawJumpFloodImage(v_in);
+	}
+}

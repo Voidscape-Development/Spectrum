@@ -1,0 +1,210 @@
+// Stroke filter: jump flood distance field + stroke/contour compositing.
+// Outputs straight (non-premultiplied) alpha, which is what OBS expects
+// from a source/filter drawn with its default SRCALPHA blending.
+#include "jump-flood-common.effect"
+
+// OBS hands filters a premultiplied texture, sampled here as linear light
+// (and written back sRGB encoded), so convert to straight alpha now: dividing
+// by alpha later, in sRGB encoded space, would brighten translucent pixels.
+float4 PSCrop(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(padSampler, v_in.uv);
+	rgba.rgb *= (rgba.a > 0.) ? (1. / rgba.a) : 0.;
+	return encode_input > 0.5 ? srgb_linear_to_nonlinear(rgba) : rgba;
+}
+
+float4 drawOutput(VertData v_in) : TARGET
+{
+	float4 px = output_image.Sample(textureSampler, v_in.uv);
+	// Only dither pixels the stroke changed, so untouched source content
+	// passes through bit-exact.
+	float4 diff = abs(px - overlay.Sample(textureSampler, v_in.uv));
+	float changed = step(0.5 / 255.0, max(max(diff.r, diff.g), max(diff.b, diff.a)));
+	if (hdr_output > 0.5)
+		return srgb_nonlinear_to_linear(px);
+	return srgb_nonlinear_to_linear(lerp(px, dither(px, v_in.uv), changed));
+}
+
+// The source, with straight alpha (see PSCrop).
+float4 source_color(float2 uv)
+{
+	return overlay.Sample(textureSampler, uv);
+}
+
+float4 fill_from_source(float2 uv)
+{
+	float4 fill_color = srgb_nonlinear_to_linear(stroke_fill_source.Sample(textureSampler, uv));
+	fill_color.rgb *= (fill_color.a > 0.) ? (1. / fill_color.a) : 0.;
+	return srgb_linear_to_nonlinear(fill_color);
+}
+
+float4 outer_stroke(VertData v_in, float4 fill)
+{
+	float2 coord = v_in.uv * uv_size;
+	float4 c = source_color(v_in.uv);
+	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	float4 stroke = float4(fill.rgb, fill.a * outer_stroke_band(sd));
+	return blend_over(c, stroke);
+}
+
+float4 inner_stroke(VertData v_in, float4 fill)
+{
+	float2 coord = v_in.uv * uv_size;
+	float4 c = source_color(v_in.uv);
+	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	float4 stroke = float4(fill.rgb, fill.a * inner_stroke_band(-sd) * inner_clip(sd, c.a));
+	return blend_over(stroke, c);
+}
+
+float4 outer_contour(VertData v_in, float4 fill)
+{
+	float2 coord = v_in.uv * uv_size;
+	float4 c = source_color(v_in.uv);
+	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	float d = max(sd, 0.0);
+	// Let the first band run slightly under the source, like the stroke.
+	float coverage = contour_bands(d) * contour_falloff(d) * edge_cov(sd + 1.0, 1.0);
+	float4 stroke = float4(fill.rgb, fill.a * coverage);
+	return blend_over(c, stroke);
+}
+
+float4 inner_contour(VertData v_in, float4 fill)
+{
+	float2 coord = v_in.uv * uv_size;
+	float4 c = source_color(v_in.uv);
+	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	float d = max(-sd, 0.0);
+	float coverage = contour_bands(d) * contour_falloff(d) * inner_clip(sd, c.a);
+	float4 stroke = float4(fill.rgb, fill.a * coverage);
+	return blend_over(stroke, c);
+}
+
+float4 drawStrokeColorImage(VertData v_in) : TARGET
+{
+	return outer_stroke(v_in, stroke_fill_color);
+}
+
+float4 drawStrokeSourceImage(VertData v_in) : TARGET
+{
+	return outer_stroke(v_in, fill_from_source(v_in.uv));
+}
+
+float4 drawStrokeInnerColorImage(VertData v_in) : TARGET
+{
+	return inner_stroke(v_in, stroke_fill_color);
+}
+
+float4 drawStrokeInnerSourceImage(VertData v_in) : TARGET
+{
+	return inner_stroke(v_in, fill_from_source(v_in.uv));
+}
+
+float4 drawContourColorImage(VertData v_in) : TARGET
+{
+	return outer_contour(v_in, stroke_fill_color);
+}
+
+float4 drawContourSourceImage(VertData v_in) : TARGET
+{
+	return outer_contour(v_in, fill_from_source(v_in.uv));
+}
+
+float4 drawContourInnerColorImage(VertData v_in) : TARGET
+{
+	return inner_contour(v_in, stroke_fill_color);
+}
+
+float4 drawContourInnerSourceImage(VertData v_in) : TARGET
+{
+	return inner_contour(v_in, fill_from_source(v_in.uv));
+}
+
+technique DrawCropPad
+{
+	pass
+	{
+		vertex_shader = VSCrop(v_in);
+		pixel_shader = PSCrop(v_in);
+	}
+}
+
+technique DrawOutput
+{
+	pass
+	{
+		vertex_shader = VSCrop(v_in);
+		pixel_shader = drawOutput(v_in);
+	}
+}
+
+technique DrawStrokeColor
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawStrokeColorImage(v_in);
+	}
+}
+
+technique DrawStrokeInnerColor
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawStrokeInnerColorImage(v_in);
+	}
+}
+
+technique DrawStrokeSource
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawStrokeSourceImage(v_in);
+	}
+}
+
+technique DrawStrokeInnerSource
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawStrokeInnerSourceImage(v_in);
+	}
+}
+
+technique DrawContourColor
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawContourColorImage(v_in);
+	}
+}
+
+technique DrawContourInnerColor
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawContourInnerColorImage(v_in);
+	}
+}
+
+technique DrawContourInnerSource
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawContourInnerSourceImage(v_in);
+	}
+}
+
+technique DrawContourSource
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = drawContourSourceImage(v_in);
+	}
+}

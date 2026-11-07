@@ -1,59 +1,45 @@
-# OBS Plugin Template
+# Spectrum
 
-## Introduction
+Spectrum is a collection of video filters and sources for OBS Studio.
 
-The plugin template is meant to be used as a starting point for OBS Studio plugin development. It includes:
+## Features
 
-* Boilerplate plugin source code
-* A CMake project file
-* GitHub Actions workflows and repository actions
+### Spectrum Blur (filter)
+Blur a source using one of several algorithms, then limit it with an effect mask.
 
-## Supported Build Environments
+- **Algorithms:** Gaussian, Box, Dual Kawase, Pixelate and Temporal.
+- **Blur types:** Area, Directional, Zoom, Motion, Tilt-Shift and Vector, where the algorithm supports them.
+- **Pixelate shapes:** Square, Hexagonal, Circle, Triangle, Voronoi, Rhomboid and Triakis.
+- **Effect masks:** Crop, Rectangle, Circle, Source or Image.
+- **Background source:** pick another source to composite the blur with.
 
-| Platform  | Tool   |
-|-----------|--------|
-| Windows   | Visual Studio 17 2022 |
-| macOS     | XCode 16.0 |
-| Windows, macOS  | CMake 3.30.5 |
-| Ubuntu 24.04 | CMake 3.28.3 |
-| Ubuntu 24.04 | `ninja-build` |
-| Ubuntu 24.04 | `pkg-config`
-| Ubuntu 24.04 | `build-essential` |
+### Spectrum Stroke, Spectrum Glow and Spectrum Shadow (filters and sources)
+- **Stroke:** an inner or outer outline, or repeating contours, filled with a color, image or source.
+- **Glow:** an inner or outer glow with adjustable size, intensity, blur type and fill.
+- **Shadow:** an inner or outer shadow with a light angle, distance, size and fill.
 
-## Quick Start
+Each one is available as a filter on a source, or as a standalone source that draws the effect from another source.
 
-An absolute bare-bones [Quick Start Guide](https://github.com/obsproject/obs-plugintemplate/wiki/Quick-Start-Guide) is available in the wiki.
+### Spectrum Mask (filter)
+- **Shape masks:** rectangle (with rounded corners), circle, ellipse, regular polygon, star, heart and squircle/superformula, with feathering and scene-relative positioning.
+- **Source and image masks:** use another source's alpha, a color channel or luminance as a mask.
+- **Gradient**, **feather** and **SVG / icon** masks.
+- **Chroma key** and an alpha-wipe mask for transitions.
+- **Alpha or adjustment mode:** a mask either cuts the source out, or applies brightness, contrast, saturation and hue adjustments inside it.
 
-## Documentation
+When the Move Transition plugin is installed, the blur and mask filters can be animated between two filter states.
 
-All documentation can be found in the [Plugin Template Wiki](https://github.com/obsproject/obs-plugintemplate/wiki).
+## Building
 
-Suggested reading to get up and running:
+Spectrum uses the standard OBS plugin CMake build system. It needs the OBS frontend API, Qt 6 (Widgets, Svg, Xml), libcurl and nlohmann_json.
 
-* [Getting started](https://github.com/obsproject/obs-plugintemplate/wiki/Getting-Started)
-* [Build system requirements](https://github.com/obsproject/obs-plugintemplate/wiki/Build-System-Requirements)
-* [Build system options](https://github.com/obsproject/obs-plugintemplate/wiki/CMake-Build-System-Options)
+```sh
+cmake --preset ubuntu-x86_64
+cmake --build --preset ubuntu-x86_64
+```
 
-## GitHub Actions & CI
+On Windows and macOS, use the `windows-x64` and `macos` presets. They download the OBS sources, prebuilt dependencies and Qt listed in `buildspec.json`.
 
-Default GitHub Actions workflows are available for the following repository actions:
+## License
 
-* `push`: Run for commits or tags pushed to `master` or `main` branches.
-* `pr-pull`: Run when a Pull Request has been pushed or synchronized.
-* `dispatch`: Run when triggered by the workflow dispatch in GitHub's user interface.
-* `build-project`: Builds the actual project and is triggered by other workflows.
-* `check-format`: Checks CMake and plugin source code formatting and is triggered by other workflows.
-
-The workflows make use of GitHub repository actions (contained in `.github/actions`) and build scripts (contained in `.github/scripts`) which are not needed for local development, but might need to be adjusted if additional/different steps are required to build the plugin.
-
-### Retrieving build artifacts
-
-Successful builds on GitHub Actions will produce build artifacts that can be downloaded for testing. These artifacts are commonly simple archives and will not contain package installers or installation programs.
-
-### Building a Release
-
-To create a release, an appropriately named tag needs to be pushed to the `main`/`master` branch using semantic versioning (e.g., `12.3.4`, `23.4.5-beta2`). A draft release will be created on the associated repository with generated installer packages or installation programs attached as release artifacts.
-
-## Signing and Notarizing on macOS
-
-Basic concepts of codesigning and notarization on macOS are explained in the correspodning [Wiki article](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS) which has a specific section for the [GitHub Actions setup](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS#setting-up-code-signing-for-github-actions).
+Spectrum is licensed under the GNU General Public License v2.0 or later. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
