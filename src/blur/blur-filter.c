@@ -6,6 +6,7 @@
 #include "algorithms/pixelate.h"
 #include "algorithms/dual_kawase.h"
 #include "algorithms/temporal.h"
+#include "../common/presets.h"
 
 // How often (seconds) to retry resolving a named source that wasn't found.
 #define SOURCE_RETRY_INTERVAL 1.0f
@@ -1245,6 +1246,7 @@ static obs_properties_t *blur_filter_properties(void *data)
 	obs_properties_add_group(props, "effect_mask_crop", obs_module_text("BlurFilter.EffectMask.CropParameters"),
 				 OBS_GROUP_NORMAL, effect_mask_crop);
 
+	spectrum_presets_properties(props, data ? ((blur_filter_data_t *)data)->context : NULL);
 	return props;
 }
 

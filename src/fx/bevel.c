@@ -3,6 +3,7 @@
 #include "../common/fx-filter.h"
 
 #include <math.h>
+#include "../common/presets.h"
 
 static uint32_t bevel_padding(obs_data_t *settings)
 {
@@ -73,6 +74,7 @@ static obs_properties_t *bevel_properties(void *data)
 	obs_properties_add_color(props, "bv_shadow", obs_module_text("Bevel.ShadowColor"));
 	slider(props, "bv_shadow_amount", "Bevel.ShadowAmount", 0.0, 100.0, 0.1, "%");
 	obs_properties_add_bool(props, "bv_dither", obs_module_text("Gradient.Dither"));
+	spectrum_presets_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 

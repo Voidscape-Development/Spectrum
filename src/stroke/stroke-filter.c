@@ -2,6 +2,7 @@
 #include "stroke-types.h"
 #include "stroke.h"
 #include <math.h>
+#include "../common/presets.h"
 
 // Version 1 changed the defaults (see stroke_filter_defaults_v1). Filters and
 // sources saved by earlier versions are loaded as version 0, which keeps the
@@ -380,6 +381,7 @@ static obs_properties_t *properties(void *data, bool is_source)
 
 	gradient_properties(props, STROKE_GRADIENT_PREFIX, filter ? &filter->gradient : NULL);
 
+	spectrum_presets_properties(props, data ? ((stroke_filter_data_t *)data)->context : NULL);
 	return props;
 }
 

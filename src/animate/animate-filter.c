@@ -12,6 +12,7 @@
 
 #include <math.h>
 #include <string.h>
+#include "../common/presets.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -487,6 +488,7 @@ static obs_properties_t *animate_properties(void *data)
 	slider(props, "an_ceiling_db", "Animate.Ceiling", -100.0, 0.0, 0.1, "dB");
 	slider(props, "an_attack", "Animate.Attack", 0.0, 2000.0, 1.0, "ms");
 	slider(props, "an_release", "Animate.Release", 0.0, 5000.0, 1.0, "ms");
+	spectrum_presets_properties(props, data ? ((struct animate_filter *)data)->context : NULL);
 	return props;
 }
 

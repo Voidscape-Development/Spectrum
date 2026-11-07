@@ -5,6 +5,7 @@
 #include "glow.h"
 
 #include <math.h>
+#include "../common/presets.h"
 
 // Version 1 changed the defaults (see glow_filter_defaults_v1). Filters and
 // sources saved by earlier versions are loaded as version 0, which keeps the
@@ -434,6 +435,7 @@ static obs_properties_t *properties(void *data, bool is_source, enum filter_type
 
 	gradient_properties(props, GLOW_GRADIENT_PREFIX, data ? &((glow_filter_data_t *)data)->gradient : NULL);
 
+	spectrum_presets_properties(props, data ? ((glow_filter_data_t *)data)->context : NULL);
 	return props;
 }
 

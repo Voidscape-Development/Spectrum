@@ -3,6 +3,7 @@
 
 #include "../common/fx-filter.h"
 #include "../stroke/obs-utils.h"
+#include "../common/presets.h"
 
 #define MODE_MAP 6
 
@@ -210,6 +211,7 @@ static obs_properties_t *distort_properties(void *data)
 	obs_property_list_add_int(p, obs_module_text("Distort.Edge.Transparent"), 2);
 	obs_property_list_add_int(p, obs_module_text("Distort.Edge.Mirror"), 3);
 	obs_properties_add_bool(props, "ds_dither", obs_module_text("Gradient.Dither"));
+	spectrum_presets_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 

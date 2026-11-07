@@ -9,6 +9,7 @@
 
 #include <graphics/vec4.h>
 #include <math.h>
+#include "../common/presets.h"
 
 #define MAX_LEVELS 7
 
@@ -279,6 +280,7 @@ static obs_properties_t *light_properties(void *data)
 	obs_properties_add_group(props, "li_point_group", obs_module_text("Light.Point"), OBS_GROUP_NORMAL, g);
 
 	obs_properties_add_bool(props, "li_dither", obs_module_text("Gradient.Dither"));
+	spectrum_presets_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 

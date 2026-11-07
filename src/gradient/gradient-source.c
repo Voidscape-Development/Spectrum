@@ -1,6 +1,7 @@
 #include "gradient.h"
 
 #include <obs-module.h>
+#include "../common/presets.h"
 
 #define SOURCE_PREFIX "gradient_"
 
@@ -63,6 +64,7 @@ static obs_properties_t *gradient_source_properties(void *data)
 	obs_properties_add_int(props, "height", obs_module_text("GradientSource.Height"), 1, 16384, 1);
 
 	gradient_properties(props, SOURCE_PREFIX, s ? &s->gradient : NULL);
+	spectrum_presets_properties(props, data ? ((struct gradient_source *)data)->context : NULL);
 	return props;
 }
 

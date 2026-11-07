@@ -163,6 +163,8 @@ target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
     src/common/fx-filter.c
+    src/common/presets.c
+    src/common/presets.h
     src/common/fx-filter.h
     src/fx/gradient-map.c
     src/fx/long-shadow.c

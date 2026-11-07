@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../common/presets.h"
 
 #define CURVE_SIZE 1024
 #define CURVE_POINTS 5
@@ -449,6 +450,7 @@ static obs_properties_t *color_tools_properties(void *data)
 	obs_properties_add_bool(props, "ct_dither", obs_module_text("Gradient.Dither"));
 	if (data)
 		obs_properties_add_button2(props, "ct_reset", obs_module_text("ColorTools.Reset"), reset_clicked, data);
+	spectrum_presets_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 

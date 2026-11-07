@@ -2,6 +2,7 @@
 // through a gradient, for duotones, thermal looks and stylized grades.
 
 #include "../common/fx-filter.h"
+#include "../common/presets.h"
 
 #define GM_PREFIX "gm_gradient_"
 
@@ -67,6 +68,7 @@ static obs_properties_t *gradient_map_properties(void *data)
 	obs_property_float_set_suffix(p, "%");
 	obs_properties_add_bool(props, "gm_use_alpha", obs_module_text("GradientMap.UseAlpha"));
 	obs_properties_add_bool(props, "gm_dither", obs_module_text("Gradient.Dither"));
+	spectrum_presets_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 

@@ -4,6 +4,7 @@
 
 #include "../common/fx-filter.h"
 #include "../stroke/obs-utils.h"
+#include "../common/presets.h"
 
 #define SH_PREFIX "sh_gradient_"
 
@@ -225,6 +226,7 @@ static obs_properties_t *shape_properties(void *data)
 	slider(props, "sh_shadow_y", "Shape.ShadowY", -500.0, 500.0, 0.5, "px");
 
 	slider(props, "sh_opacity", "Gradient.Opacity", 0.0, 100.0, 0.1, "%");
+	spectrum_presets_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 
