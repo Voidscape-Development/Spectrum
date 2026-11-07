@@ -66,7 +66,7 @@ Drives any numeric setting of any filter on a source, or of the source itself, f
 
 ### Presets, transitions and performance
 - **Presets:** every Spectrum filter and source can save, load and delete named presets.
-- **Move Transition:** when the Move Transition plugin is installed, Blur, Mask, Stroke, Glow, Shadow and all the effects above (except Light) interpolate between two filter states.
+- **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort and Stylize filters interpolate between two filter states.
 - **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame.
 
 ## Building
