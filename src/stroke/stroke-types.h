@@ -12,6 +12,7 @@
 #define STROKE_FILL_TYPE_SOURCE_LABEL "StrokeFilter.SourceFill"
 #define STROKE_FILL_TYPE_IMAGE_LABEL "StrokeFilter.ImageFill"
 #define STROKE_FILL_TYPE_GRADIENT_LABEL "StrokeFilter.GradientFill"
+#define STROKE_FILL_TYPE_GRADIENT_ACROSS_LABEL "StrokeFilter.GradientAcrossFill"
 #define STROKE_GRADIENT_PREFIX "stroke_gradient_"
 
 enum stroke_fill_type {
@@ -19,6 +20,8 @@ enum stroke_fill_type {
 	STROKE_FILL_TYPE_SOURCE,
 	STROKE_FILL_TYPE_IMAGE,
 	STROKE_FILL_TYPE_GRADIENT,
+	// The gradient runs across the stroke width (or contour falloff).
+	STROKE_FILL_TYPE_GRADIENT_ACROSS,
 };
 
 #define STROKE_POSITION_OUTER_LABEL "StrokeFilter.StrokePositionOuter"

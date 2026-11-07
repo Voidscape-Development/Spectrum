@@ -12,12 +12,8 @@ uniform float dither_step = 0.0;  // one output step, encoded units; 0 = none
 uniform float time = 0.0;         // seconds
 uniform float pad_px = 0.0;       // margin drawn around the source, px
 
-// Gradient lookup (bound by gradient_bind_lut()).
-uniform texture2d gradient_lut;
-uniform float gradient_lut_size = 2048.0;
-uniform float gradient_offset = 0.0;
-uniform int gradient_repeat = 1;
-uniform float gradient_hue = 0.0;
+// Gradient lookup (gradient_sample(), bound by gradient_bind_lut()).
+#include "../gradient/gradient-sample.effect"
 
 sampler_state textureSampler {
 	Filter   = Linear;
@@ -215,38 +211,6 @@ float4 fx_output(float4 c, float2 uv)
 	}
 	c = saturate(c);
 	return linear_input > 0.5 ? float4(srgb_to_linear(c.rgb), c.a) : c;
-}
-
-/* Gradient ------------------------------------------------------------- */
-
-float4 gradient_lut_at(float t)
-{
-	float x = saturate(t) * (gradient_lut_size - 1.0);
-	float i0 = floor(x);
-	float i1 = min(i0 + 1.0, gradient_lut_size - 1.0);
-	float4 a = gradient_lut.Sample(pointSampler, float2((i0 + 0.5) / gradient_lut_size, 0.5));
-	float4 b = gradient_lut.Sample(pointSampler, float2((i1 + 0.5) / gradient_lut_size, 0.5));
-	return lerp(a, b, x - i0);
-}
-
-// The gradient at t (with the extend mode, offset and hue shift applied),
-// sRGB encoded, straight alpha.
-float4 gradient_sample(float t)
-{
-	t += gradient_offset;
-	if (gradient_repeat == 2)
-		t = frac(t);
-	else if (gradient_repeat == 3)
-		t = 1.0 - abs(frac(t * 0.5) * 2.0 - 1.0);
-	float4 c = gradient_lut_at(t);
-	if (gradient_hue != 0.0) {
-		float3 lab = linear_to_oklab(c.rgb);
-		float cs = cos(gradient_hue);
-		float sn = sin(gradient_hue);
-		lab.yz = float2(lab.y * cs - lab.z * sn, lab.y * sn + lab.z * cs);
-		c.rgb = saturate(oklab_to_linear(lab));
-	}
-	return float4(linear_to_srgb(c.rgb), c.a);
 }
 
 /* Blend modes (encoded, b over a) ------------------------------------- */

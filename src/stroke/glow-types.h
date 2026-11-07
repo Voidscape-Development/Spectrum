@@ -16,6 +16,7 @@
 #define GLOW_FILL_TYPE_SOURCE_LABEL "StrokeFilter.SourceFill"
 #define GLOW_FILL_TYPE_IMAGE_LABEL "StrokeFilter.ImageFill"
 #define GLOW_FILL_TYPE_GRADIENT_LABEL "StrokeFilter.GradientFill"
+#define GLOW_FILL_TYPE_GRADIENT_STRENGTH_LABEL "GlowFilter.GradientStrengthFill"
 #define GLOW_GRADIENT_PREFIX "glow_gradient_"
 
 enum glow_fill_type {
@@ -23,6 +24,8 @@ enum glow_fill_type {
 	GLOW_FILL_TYPE_SOURCE,
 	GLOW_FILL_TYPE_IMAGE,
 	GLOW_FILL_TYPE_GRADIENT,
+	// The gradient colors the glow by its strength.
+	GLOW_FILL_TYPE_GRADIENT_STRENGTH,
 };
 
 #define GLOW_POSITION_OUTER_LABEL "GlowFilter.PositionOuter"

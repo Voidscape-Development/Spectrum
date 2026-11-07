@@ -2,10 +2,10 @@
 // gradient (lava, plasma, aurora, fog, cells, marble...).
 #include "fx-common.effect"
 
-uniform int nz_type = 3;        // 1 value, 2 perlin, 3 simplex, 4 cells, 5 cell edges
-uniform int nz_fractal = 1;     // 1 fbm, 2 turbulence, 3 ridged
+uniform int nz_type;        // 1 value, 2 perlin, 3 simplex, 4 cells, 5 cell edges
+uniform int nz_fractal;     // 1 fbm, 2 turbulence, 3 ridged
 uniform float nz_scale = 200.0; // px per base cell
-uniform int nz_octaves = 4;
+uniform int nz_octaves;
 uniform float nz_lacunarity = 2.0;
 uniform float nz_gain = 50.0;   // %
 uniform float nz_warp = 0.0;    // domain warp strength, %

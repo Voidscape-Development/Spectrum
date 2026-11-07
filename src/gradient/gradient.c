@@ -581,6 +581,21 @@ void gradient_refresh_visibility(obs_properties_t *props, const char *prefix, ob
 	set_visible(props, KEY("corner_smooth"), corners);
 }
 
+void gradient_hide_geometry(obs_properties_t *props, const char *prefix)
+{
+	char kbuf[128];
+	static const char *keys[] = {"shape",       "center_x",     "center_y",  "angle",     "scale",
+				     "aspect",      "focal_x",      "focal_y",   "twist",     "repetitions",
+				     "corner_tl",   "corner_tr",    "corner_bl", "corner_br", "corner_smooth",
+				     "anim_rotate", "finish_group", NULL};
+	for (size_t i = 0; keys[i]; i++)
+		set_visible(props, KEY(keys[i]), false);
+	set_visible(props, KEY("edit_stops"), true);
+	set_visible(props, KEY("repeat"), true);
+	set_visible(props, KEY("offset"), true);
+	set_visible(props, KEY("anim_scroll"), true);
+}
+
 void gradient_set_visible(obs_properties_t *props, const char *prefix, bool visible)
 {
 	char kbuf[128];

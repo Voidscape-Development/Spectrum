@@ -5,6 +5,9 @@ uniform texture2d output_image;
 uniform texture2d input_image;
 uniform texture2d glow_fill_source;
 uniform float4 glow_fill_color;
+// Color the glow by its strength through a gradient instead of a fill.
+uniform float fill_gradient = 0.0;
+#include "../gradient/gradient-sample.effect"
 uniform texture2d glow_mask;
 uniform float intensity;
 uniform float2 offset;
@@ -146,6 +149,10 @@ float4 outer_glow(VertData v_in, float4 fill)
 {
 	float mask = glow_mask.Sample(textureSampler, v_in.uv - offset).r;
 	float4 color = image.Sample(textureSampler, v_in.uv);
+	// Gradient start at the source's edge (where the blurred mask is about
+	// half), end where the glow fades out.
+	if (fill_gradient > 0.5)
+		fill = gradient_sample(1.0 - saturate(mask * 2.0));
 	float4 glow = float4(fill.rgb, clamp(fill.a * intensity * mask, 0.0, 1.0));
 	// No glow behind the parts of the source above the threshold.
 	glow.a *= 1.0 - step(threshold, color.a);
@@ -159,6 +166,9 @@ float4 inner_glow(VertData v_in, float4 fill)
 
 	float4 mask_col = glow_mask.Sample(textureSampler, v_in.uv - offset);
 	float4 color = image.Sample(textureSampler, v_in.uv);
+	// Gradient start at the edge (mask about half), end deep inside.
+	if (fill_gradient > 0.5)
+		fill = gradient_sample(saturate(mask_col.r * 2.0 - 1.0));
 	// max(): wide gamut HDR input can have negative components.
 	float3 color_rgb_l = pow(max(color.rgb, 0.0), gamma);
 	float3 glow_fill_l = pow(fill.rgb, gamma);

@@ -411,6 +411,8 @@ static obs_properties_t *properties(void *data, bool is_source, enum filter_type
 				  GLOW_FILL_TYPE_SOURCE);
 	obs_property_list_add_int(glow_fill_method_list, obs_module_text(GLOW_FILL_TYPE_GRADIENT_LABEL),
 				  GLOW_FILL_TYPE_GRADIENT);
+	obs_property_list_add_int(glow_fill_method_list, obs_module_text(GLOW_FILL_TYPE_GRADIENT_STRENGTH_LABEL),
+				  GLOW_FILL_TYPE_GRADIENT_STRENGTH);
 	//obs_property_list_add_int(
 	//	glow_fill_method_list,
 	//	obs_module_text(GLOW_FILL_TYPE_IMAGE_LABEL),
@@ -580,9 +582,12 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 {
 	UNUSED_PARAMETER(p);
 	enum glow_fill_type fill_type = (enum glow_fill_type)obs_data_get_int(settings, "glow_fill_type");
-	gradient_set_visible(props, GLOW_GRADIENT_PREFIX, fill_type == GLOW_FILL_TYPE_GRADIENT);
+	gradient_set_visible(props, GLOW_GRADIENT_PREFIX,
+			     fill_type == GLOW_FILL_TYPE_GRADIENT || fill_type == GLOW_FILL_TYPE_GRADIENT_STRENGTH);
 	if (fill_type == GLOW_FILL_TYPE_GRADIENT) {
 		gradient_refresh_visibility(props, GLOW_GRADIENT_PREFIX, settings);
+	} else if (fill_type == GLOW_FILL_TYPE_GRADIENT_STRENGTH) {
+		gradient_hide_geometry(props, GLOW_GRADIENT_PREFIX);
 	}
 	switch (fill_type) {
 	case GLOW_FILL_TYPE_COLOR:
@@ -601,6 +606,7 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 		stroke_setting_visibility("glow_fill_image", true, props);
 		break;
 	case GLOW_FILL_TYPE_GRADIENT:
+	case GLOW_FILL_TYPE_GRADIENT_STRENGTH:
 		stroke_setting_visibility("glow_fill_color", false, props);
 		stroke_setting_visibility("glow_fill_source", false, props);
 		stroke_setting_visibility("glow_fill_image", false, props);

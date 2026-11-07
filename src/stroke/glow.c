@@ -381,6 +381,12 @@ void render_glow_filter(glow_filter_data_t *data)
 
 	data->output_texrender = create_or_reset_texrender_format(data->output_texrender, GS_RGBA16F);
 
+	const bool gradient_strength = data->fill_type == GLOW_FILL_TYPE_GRADIENT_STRENGTH &&
+				       gradient_bind_lut(&data->gradient, effect);
+	gs_eparam_t *param_fill_gradient = gs_effect_get_param_by_name(effect, "fill_gradient");
+	if (param_fill_gradient)
+		gs_effect_set_float(param_fill_gradient, gradient_strength ? 1.0f : 0.0f);
+
 	bool fill_color = (data->fill_type == GLOW_FILL_TYPE_COLOR) || !source_available;
 	const char *fill_type = fill_color ? "Color" : "Source";
 	const char *position = data->glow_position == GLOW_POSITION_OUTER ? "FilterOuterGlow" : "FilterInnerGlow";

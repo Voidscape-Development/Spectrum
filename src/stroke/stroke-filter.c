@@ -357,6 +357,8 @@ static obs_properties_t *properties(void *data, bool is_source)
 				  STROKE_FILL_TYPE_SOURCE);
 	obs_property_list_add_int(stroke_fill_method_list, obs_module_text(STROKE_FILL_TYPE_GRADIENT_LABEL),
 				  STROKE_FILL_TYPE_GRADIENT);
+	obs_property_list_add_int(stroke_fill_method_list, obs_module_text(STROKE_FILL_TYPE_GRADIENT_ACROSS_LABEL),
+				  STROKE_FILL_TYPE_GRADIENT_ACROSS);
 	//obs_property_list_add_int(
 	//	stroke_fill_method_list,
 	//	obs_module_text(STROKE_FILL_TYPE_IMAGE_LABEL),
@@ -494,9 +496,12 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 {
 	UNUSED_PARAMETER(p);
 	enum stroke_fill_type fill_type = (enum stroke_fill_type)obs_data_get_int(settings, "stroke_fill_type");
-	gradient_set_visible(props, STROKE_GRADIENT_PREFIX, fill_type == STROKE_FILL_TYPE_GRADIENT);
+	gradient_set_visible(props, STROKE_GRADIENT_PREFIX,
+			     fill_type == STROKE_FILL_TYPE_GRADIENT || fill_type == STROKE_FILL_TYPE_GRADIENT_ACROSS);
 	if (fill_type == STROKE_FILL_TYPE_GRADIENT) {
 		gradient_refresh_visibility(props, STROKE_GRADIENT_PREFIX, settings);
+	} else if (fill_type == STROKE_FILL_TYPE_GRADIENT_ACROSS) {
+		gradient_hide_geometry(props, STROKE_GRADIENT_PREFIX);
 	}
 	switch (fill_type) {
 	case STROKE_FILL_TYPE_COLOR:
@@ -515,6 +520,7 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 		stroke_setting_visibility("stroke_fill_image", true, props);
 		break;
 	case STROKE_FILL_TYPE_GRADIENT:
+	case STROKE_FILL_TYPE_GRADIENT_ACROSS:
 		stroke_setting_visibility("stroke_fill_color", false, props);
 		stroke_setting_visibility("stroke_fill_source", false, props);
 		stroke_setting_visibility("stroke_fill_image", false, props);

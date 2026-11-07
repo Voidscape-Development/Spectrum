@@ -1,0 +1,80 @@
+// Gradient lookup for shaders that sample a Spectrum gradient themselves.
+// The uniforms are set by gradient_bind_lut() (src/gradient/gradient.c).
+// Self-contained (prefixed names) so it can be included next to any other
+// helpers.
+
+uniform texture2d gradient_lut;
+uniform float gradient_lut_size = 2048.0;
+uniform float gradient_offset = 0.0;
+uniform int gradient_repeat;
+uniform float gradient_hue = 0.0;
+
+sampler_state gradientPointSampler {
+	Filter   = Point;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+float grad_lin_to_srgb_channel(float u)
+{
+	return (u <= 0.0031308) ? (12.92 * u) : ((1.055 * pow(max(u, 0.0), 1.0 / 2.4)) - 0.055);
+}
+
+float3 grad_lin_to_srgb(float3 v)
+{
+	return float3(grad_lin_to_srgb_channel(v.r), grad_lin_to_srgb_channel(v.g), grad_lin_to_srgb_channel(v.b));
+}
+
+float3 grad_lin_to_oklab(float3 c)
+{
+	float l = 0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b;
+	float m = 0.2119034982 * c.r + 0.6806995451 * c.g + 0.1073969566 * c.b;
+	float s = 0.0883024619 * c.r + 0.2817188376 * c.g + 0.6299787005 * c.b;
+	float3 lms = pow(max(float3(l, m, s), float3(0.0, 0.0, 0.0)), float3(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0));
+	return float3(0.2104542553 * lms.x + 0.7936177850 * lms.y - 0.0040720468 * lms.z,
+		      1.9779984951 * lms.x - 2.4285922050 * lms.y + 0.4505937099 * lms.z,
+		      0.0259040371 * lms.x + 0.7827717662 * lms.y - 0.8086757660 * lms.z);
+}
+
+float3 grad_oklab_to_lin(float3 c)
+{
+	float l_ = c.x + 0.3963377774 * c.y + 0.2158037573 * c.z;
+	float m_ = c.x - 0.1055613458 * c.y - 0.0638541728 * c.z;
+	float s_ = c.x - 0.0894841775 * c.y - 1.2914855480 * c.z;
+	float l = l_ * l_ * l_;
+	float m = m_ * m_ * m_;
+	float s = s_ * s_ * s_;
+	return float3(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+		      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+		      -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+}
+
+float4 gradient_lut_at(float t)
+{
+	float x = saturate(t) * (gradient_lut_size - 1.0);
+	float i0 = floor(x);
+	float i1 = min(i0 + 1.0, gradient_lut_size - 1.0);
+	float4 a = gradient_lut.Sample(gradientPointSampler, float2((i0 + 0.5) / gradient_lut_size, 0.5));
+	float4 b = gradient_lut.Sample(gradientPointSampler, float2((i1 + 0.5) / gradient_lut_size, 0.5));
+	return lerp(a, b, x - i0);
+}
+
+// The gradient at t (with the extend mode, offset and hue shift applied),
+// sRGB encoded, straight alpha.
+float4 gradient_sample(float t)
+{
+	t += gradient_offset;
+	if (gradient_repeat == 2)
+		t = frac(t);
+	else if (gradient_repeat == 3)
+		t = 1.0 - abs(frac(t * 0.5) * 2.0 - 1.0);
+	float4 c = gradient_lut_at(t);
+	if (gradient_hue != 0.0) {
+		float3 lab = grad_lin_to_oklab(c.rgb);
+		float cs = cos(gradient_hue);
+		float sn = sin(gradient_hue);
+		lab.yz = float2(lab.y * cs - lab.z * sn, lab.y * sn + lab.z * cs);
+		c.rgb = saturate(grad_oklab_to_lin(lab));
+	}
+	return float4(grad_lin_to_srgb(c.rgb), c.a);
+}

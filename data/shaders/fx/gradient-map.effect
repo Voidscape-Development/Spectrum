@@ -1,12 +1,12 @@
 // Spectrum Gradient Map: maps a channel of the source through a gradient.
 #include "fx-common.effect"
 
-uniform int gm_source = 1;
+uniform int gm_source;
 uniform float gm_black = 0.0;  // %
 uniform float gm_white = 100.0; // %
 uniform float gm_gamma = 1.0;
 uniform bool gm_invert;
-uniform int gm_blend = 1;
+uniform int gm_blend;
 uniform float gm_amount = 100.0; // %
 uniform bool gm_use_alpha;
 

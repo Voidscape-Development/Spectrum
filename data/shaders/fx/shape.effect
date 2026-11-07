@@ -2,22 +2,22 @@
 // drop shadow, anti-aliased analytically at any size.
 #include "fx-common.effect"
 
-uniform int sh_shape = 1;
+uniform int sh_shape;
 uniform float sh_radius = 0.0;     // corner radius, px
 uniform float sh_rotation = 0.0;   // degrees
-uniform int sh_sides = 6;
-uniform int sh_points = 5;
+uniform int sh_sides;
+uniform int sh_points;
 uniform float sh_inner = 50.0;     // star inner radius, %
 uniform float sh_thickness = 25.0; // ring / cross thickness, %
 uniform bool sh_stretch;
 uniform float sh_padding = 0.0;    // px
 
-uniform int sh_fill_type = 1; // 0 none, 1 color, 2 gradient, 3 source
+uniform int sh_fill_type; // 0 none, 1 color, 2 gradient, 3 source
 uniform float4 sh_fill_color;
 uniform texture2d fill_tex;
 
 uniform float sh_stroke_width = 0.0;
-uniform int sh_stroke_position = 1; // 1 inside, 2 center, 3 outside
+uniform int sh_stroke_position; // 1 inside, 2 center, 3 outside
 uniform float4 sh_stroke_color;
 
 uniform bool sh_shadow;

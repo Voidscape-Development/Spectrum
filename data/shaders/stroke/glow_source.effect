@@ -3,6 +3,9 @@ uniform texture2d image;
 uniform texture2d glow_fill_source;
 uniform texture2d output_image;
 uniform float4 glow_fill_color;
+// Color the glow by its strength through a gradient instead of a fill.
+uniform float fill_gradient = 0.0;
+#include "../gradient/gradient-sample.effect"
 uniform texture2d glow_mask;
 uniform float intensity;
 uniform float2 offset;
@@ -135,7 +138,8 @@ float4 mainImageOuterGlowColor(VertData v_in) : TARGET
 {
 	float4 mask_alpha = glow_mask.Sample(textureSampler, v_in.uv - offset);
 	float4 color = image.Sample(textureSampler, v_in.uv);
-	float4 glow = float4(glow_fill_color.rgb, clamp(glow_fill_color.a * intensity * mask_alpha.r, 0.0f, 1.0f));
+	float4 fill = fill_gradient > 0.5 ? gradient_sample(1.0 - saturate(mask_alpha.r * 2.0)) : glow_fill_color;
+	float4 glow = float4(fill.rgb, clamp(fill.a * intensity * mask_alpha.r, 0.0f, 1.0f));
 	float blend_mask = clamp(step(threshold, color.a) + step(glow.a, 0.0001), 0.0, 1.0);
 	return fill_behind * glow + (1.0 - fill_behind) * (1.0 - blend_mask) * float4(glow.rgb, glow.a * step(color.a, threshold) * (1.0 - color.a));
 }
@@ -157,7 +161,8 @@ float4 mainImageInnerGlowColor(VertData v_in) : TARGET
 	float4 mask_col = glow_mask.Sample(textureSampler, v_in.uv - offset);
 	float4 col = image.Sample(textureSampler, v_in.uv);
 	float mask_alpha = clamp(intensity * (1.0 - mask_col.r), 0.0f, 1.0f) * col.a;
-	return float4(glow_fill_color.rgb, glow_fill_color.a * mask_alpha);
+	float4 fill = fill_gradient > 0.5 ? gradient_sample(saturate(mask_col.r * 2.0 - 1.0)) : glow_fill_color;
+	return float4(fill.rgb, fill.a * mask_alpha);
 }
 
 float4 mainImageInnerGlowSource(VertData v_in) : TARGET

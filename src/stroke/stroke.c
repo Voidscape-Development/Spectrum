@@ -491,6 +491,12 @@ void render_jf_distance(stroke_filter_data_t *data)
 		}
 	}
 
+	const bool gradient_across = data->fill_type == STROKE_FILL_TYPE_GRADIENT_ACROSS &&
+				     gradient_bind_lut(&data->gradient, effect);
+	gs_eparam_t *param_fill_gradient = gs_effect_get_param_by_name(effect, "fill_gradient");
+	if (param_fill_gradient)
+		gs_effect_set_float(param_fill_gradient, gradient_across ? 1.0f : 0.0f);
+
 	bool fill_color = (data->fill_type == STROKE_FILL_TYPE_COLOR) || !source_available;
 
 	if (data->param_stroke_uv_size) {

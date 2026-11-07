@@ -134,6 +134,10 @@ void gradient_properties(obs_properties_t *props, const char *prefix, gradient_t
 void gradient_properties_ex(obs_properties_t *props, const char *prefix, gradient_t *g, uint32_t flags);
 // Shows or hides all of the gradient's groups (for fill type lists).
 void gradient_set_visible(obs_properties_t *props, const char *prefix, bool visible);
+// Hides the settings that place the gradient on screen (shape, center,
+// angle...) and the finish group, for uses that only map a value through
+// the gradient.
+void gradient_hide_geometry(obs_properties_t *props, const char *prefix);
 // Applies the shape dependent visibility of the gradient settings.
 void gradient_refresh_visibility(obs_properties_t *props, const char *prefix, obs_data_t *settings);
 
