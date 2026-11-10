@@ -6,7 +6,6 @@
 #include <util/darray.h>
 #include <util/platform.h>
 #include <util/threading.h>
-#include <graphics/image-file.h>
 
 #include <stdio.h>
 
@@ -322,8 +321,9 @@ struct blur_filter_data {
 	bool mask_rect_inv;
 
 	// Image mask. Decoded off the graphics thread, uploaded under the
-	// graphics lock.
-	gs_image_file_t *mask_image;
+	// graphics lock. Loaded with gs_create_texture_file_data() rather than
+	// the gs_image_file_* API, which was removed in OBS Studio 33.
+	gs_texture_t *mask_image;
 	struct dstr mask_image_path;
 
 	// Output Effect Parameters

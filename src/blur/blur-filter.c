@@ -211,9 +211,8 @@ static void blur_filter_destroy(void *data)
 		gs_texture_destroy(filter->kernel_texture);
 	}
 	if (filter->mask_image)
-		gs_image_file_free(filter->mask_image);
+		gs_texture_destroy(filter->mask_image);
 	obs_leave_graphics();
-	bfree(filter->mask_image);
 
 	external_source_free(&filter->background);
 	external_source_free(&filter->mask_source);
@@ -377,24 +376,23 @@ static void update_mask_image(blur_filter_data_t *filter, const char *path)
 		return;
 	dstr_copy(&filter->mask_image_path, path);
 
-	gs_image_file_t *image = NULL;
+	enum gs_color_format format = GS_UNKNOWN;
+	uint32_t cx = 0, cy = 0;
+	uint8_t *pixels = NULL;
 	if (path && *path) {
-		image = bzalloc(sizeof(gs_image_file_t));
-		gs_image_file_init(image, path);
-		if (!image->loaded) {
+		pixels = gs_create_texture_file_data(path, &format, &cx, &cy);
+		if (!pixels) {
 			blog(LOG_WARNING, "[Spectrum] Unable to load mask image: %s", path);
 		}
 	}
 
 	obs_enter_graphics();
-	gs_image_file_t *old = filter->mask_image;
-	if (image)
-		gs_image_file_init_texture(image);
-	filter->mask_image = image;
+	gs_texture_t *old = filter->mask_image;
+	filter->mask_image = pixels ? gs_texture_create(cx, cy, format, 1, (const uint8_t **)&pixels, 0) : NULL;
 	if (old)
-		gs_image_file_free(old);
+		gs_texture_destroy(old);
 	obs_leave_graphics();
-	bfree(old);
+	bfree(pixels);
 }
 
 static void blur_filter_update(void *data, obs_data_t *settings)
@@ -815,7 +813,7 @@ static void apply_effect_mask_source(blur_filter_data_t *filter)
 		alpha_texture = render_source_to_texrender(source, &filter->mask_source_texrender, GS_CS_SRGB);
 		obs_source_release(source);
 	} else {
-		alpha_texture = filter->mask_image ? filter->mask_image->texture : NULL;
+		alpha_texture = filter->mask_image;
 	}
 
 	if (!begin_mask_pass(filter)) {

@@ -2,7 +2,6 @@
 
 #include <obs-module.h>
 #include <util/dstr.h>
-#include <graphics/image-file.h>
 #include "base-filter.h"
 #include "color-adjustments.h"
 
