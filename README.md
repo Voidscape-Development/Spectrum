@@ -61,13 +61,20 @@ Exposure, temperature/tint, contrast, saturation and vibrance, levels, master an
 - **Stylize:** chromatic aberration, glitch, CRT curvature and scanlines, mono or CMYK halftone, posterize with optional ordered dither, film grain and vignette.
 - **Light:** bloom (a float blur pyramid), light rays, lens flare, and a point light that uses the source's alpha as a bump map.
 
+### Spectrum Retro (filter)
+Four retro and painterly looks, each off by default. Only the enabled ones run, as separate passes, so the filter costs nothing while they are all off.
+- **Oil Paint:** an anisotropic Kuwahara filter (polynomial sector weights, steered by the smoothed structure tensor) with radius, sharpness and brush direction (set it to 0 for a generalised Kuwahara).
+- **ASCII Art:** the picture as a grid of characters picked by brightness from a built-in 5x7 glyph ramp, anti-aliased, with character size, original colors, mono, or a custom text color on a background color, and an amount to blend with the original.
+- **Retro Palette:** Game Boy, CGA, CGA/EGA 16 colors, PICO-8 style, 1-bit or a custom 2-4 color palette, with ordered (Bayer 2x2/4x4/8x8) or blue noise dithering and a pixel size. Colors are matched in Oklab (or by brightness only, for shade palettes) and the two nearest palette colors are mixed in linear light, so dithered areas keep their brightness.
+- **VHS:** animated tracking errors (a rolling band of tearing and snow), wobble, chroma bleed and delay, tape noise and dropouts, and head switching noise at the bottom.
+
 ### Spectrum Animate (filter)
 Drives any numeric setting of any filter on a source, or of the source itself, from a looping waveform (sine, triangle, ramps, square, smooth random) or from the level of an audio source with attack and release. It works with OBS's built-in filters and with other plugins too.
 
 ### Presets, transitions and performance
 - **Presets:** every Spectrum filter and source can save, load and delete named presets.
 - **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, shape rotation and shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, and the light ray, flare and point light positions. Changes show live, and Cancel restores the previous values.
-- **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort and Stylize filters interpolate between two filter states.
+- **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort, Stylize and Retro filters interpolate between two filter states.
 - **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame.
 
 ## Building

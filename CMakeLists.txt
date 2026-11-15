@@ -180,4 +180,7 @@ target_sources(
     src/animate/animate-filter.c
 )
 
+# Retro (oil paint, ASCII, palettes, VHS)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/retro.c)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
