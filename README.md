@@ -46,6 +46,8 @@ Rectangles (rounded), ellipses, polygons, stars, hearts, rings and crosses, draw
 ### Spectrum Noise (source)
 Animated procedural backgrounds such as lava, plasma, aurora, fog, marble and cells. Choose value, Perlin, simplex, cell or cell-edge noise, layered as smooth fBm, turbulence or ridged noise. Add domain warping, flow and evolution, then map the result through a gradient.
 
+Patterns: a twinkling **starfield** with parallax layers (Detail Layers set the depth layers; with Flow, nearer layers pass faster), soft **drifting particles/dust**, **water caustics**, animated **Truchet tiles** and a **hex grid** with pulsing cells and glowing edges. Density, Size / Line Width and Twinkle / Pulse shape them.
+
 ### Spectrum Gradient Map (filter)
 Maps brightness, perceptual lightness or a single channel through a gradient, for duotones, thermal looks and stylized grades. It has black/white points, gamma, nine blend modes and an amount.
 
