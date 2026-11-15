@@ -80,6 +80,10 @@ extern struct obs_source_info spectrum_noise_dissolve_transition;
 extern struct obs_source_info spectrum_composite_filter;
 extern struct obs_source_info spectrum_edge_filter;
 
+/* Warp and Time FX */
+extern struct obs_source_info spectrum_warp_filter;
+extern struct obs_source_info spectrum_time_fx_filter;
+
 #include "common/fx-filter.h"
 
 // Registers a filter built on the fx framework, which supports Move
@@ -153,6 +157,9 @@ bool obs_module_load(void)
 
 	register_fx_filter(&spectrum_composite_filter);
 	register_fx_filter(&spectrum_edge_filter);
+
+	register_fx_filter(&spectrum_warp_filter);
+	obs_register_source(&spectrum_time_fx_filter);
 
 	obs_log(LOG_INFO, "loaded version %s", PLUGIN_VERSION);
 	return true;

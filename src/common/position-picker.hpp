@@ -35,6 +35,8 @@ enum class HandleType {
 	PointOffset,  // key_x / key_y: px from the centre
 	Angle,        // key_angle: degrees around an anchor
 	Polar,        // key_angle + key_distance (px) from the centre
+	PointPixel,   // key_x / key_y: px offset from a rest point at
+	// (rest_x, rest_y) x the source size
 };
 
 struct HandleSpec {
@@ -49,11 +51,14 @@ struct HandleSpec {
 	double max_distance;
 	const char *cond_key; // shown only when this setting is set (bool) or
 	int cond_values[4];   // has one of these values (int, 0 terminated)
+	double rest_x = 0.0;  // PointPixel: rest point, fraction of the size
+	double rest_y = 0.0;
 };
 
 struct Handle {
 	const HandleSpec *spec;
 	bool visible;
+	// The label is drawn only when spec->label is set.
 	QPointF pos; // source pixels
 };
 

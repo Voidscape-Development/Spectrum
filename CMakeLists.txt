@@ -247,4 +247,12 @@ target_sources(
     src/gradient/gradient-palette-dialog.cpp
 )
 
+# Warp and Time FX
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/fx/warp.c
+    src/fx/time-fx.c
+)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

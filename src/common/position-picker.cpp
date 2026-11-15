@@ -42,6 +42,38 @@ QString T(const char *id)
 #define ANGLE(label, key, anchor, y_up) {HandleType::Angle, label, nullptr, nullptr, key, nullptr, anchor, y_up, 0.0, nullptr, {0}}
 #define ANGLE_IF(label, key, anchor, y_up, ck, ...) \
 	{HandleType::Angle, label, nullptr, nullptr, key, nullptr, anchor, y_up, 0.0, ck, {__VA_ARGS__}}
+#define PX_IF(label, kx, ky, rx, ry, ck, ...) \
+	{HandleType::PointPixel, label, kx, ky, nullptr, nullptr, -1, false, 0.0, ck, {__VA_ARGS__}, rx, ry}
+
+// Spectrum Warp: corner pin corners and the mesh points (offsets in px from
+// where each point starts).
+std::vector<HandleSpec> warp_specs()
+{
+	std::vector<HandleSpec> list = {
+		PX_IF("Picker.CornerTopLeft", "wp_c0_x", "wp_c0_y", 0.0, 0.0, "wp_mode", 1),
+		PX_IF("Picker.CornerTopRight", "wp_c1_x", "wp_c1_y", 1.0, 0.0, "wp_mode", 1),
+		PX_IF("Picker.CornerBottomRight", "wp_c2_x", "wp_c2_y", 1.0, 1.0, "wp_mode", 1),
+		PX_IF("Picker.CornerBottomLeft", "wp_c3_x", "wp_c3_y", 0.0, 1.0, "wp_mode", 1),
+	};
+	// Key names live as long as the table.
+	static std::string keys[4][4][2];
+	for (int mode = 2; mode <= 3; mode++) {
+		const int n = mode == 2 ? 3 : 4;
+		for (int row = 0; row < n; row++) {
+			for (int col = 0; col < n; col++) {
+				std::string *k = keys[row][col];
+				if (k[0].empty()) {
+					const std::string base = "wp_mesh_" + std::to_string(row) + std::to_string(col);
+					k[0] = base + "_x";
+					k[1] = base + "_y";
+				}
+				list.push_back(PX_IF(nullptr, k[0].c_str(), k[1].c_str(), (double)col / (n - 1),
+						     (double)row / (n - 1), "wp_mode", mode));
+			}
+		}
+	}
+	return list;
+}
 
 // Appends handles for the mesh and free color points of the gradients of
 // these types (prefix, and the fill type condition of the gradient). Which
@@ -195,6 +227,10 @@ const std::map<std::string, std::vector<HandleSpec>> &specs()
 		{"spectrum_edge_filter",
 		 {ANGLE_IF("Picker.LightAngle", "ed_angle", -1, true, "ed_mode", 4),
 		  ANGLE_IF("Picker.HatchAngle", "ed_hatch_angle", -1, false, "ed_mode", 3)}},
+		{"spectrum_warp_filter", warp_specs()},
+		{"spectrum_time_fx_filter",
+		 {PT_IF("Picker.SlitCenter", "tf_slit_center_x", "tf_slit_center_y", "tf_slit_map", 4),
+		  ANGLE_IF("Picker.SlitAngle", "tf_slit_angle", -1, false, "tf_slit_map", 3)}},
 	});
 	return table;
 }
@@ -337,6 +373,10 @@ void PickerCanvas::loadHandles()
 			h.pos = QPointF(cx + obs_data_get_double(settings, s.key_x),
 					cy + obs_data_get_double(settings, s.key_y));
 			break;
+		case HandleType::PointPixel:
+			h.pos = QPointF(s.rest_x * _sourceWidth + obs_data_get_double(settings, s.key_x),
+					s.rest_y * _sourceHeight + obs_data_get_double(settings, s.key_y));
+			break;
 		case HandleType::Angle:
 			h.pos = QPointF(obs_data_get_double(settings, s.key_angle), 0.0);
 			break;
@@ -380,7 +420,8 @@ QPointF PickerCanvas::anchorWidgetPos(const Handle &h) const
 {
 	const int a = h.spec->anchor;
 	if (a >= 0 && a < (int)_handles.size() && _handles[a].visible &&
-	    (_handles[a].spec->type == HandleType::PointPercent || _handles[a].spec->type == HandleType::PointOffset))
+	    (_handles[a].spec->type == HandleType::PointPercent || _handles[a].spec->type == HandleType::PointOffset ||
+	     _handles[a].spec->type == HandleType::PointPixel))
 		return toWidget(_handles[a].pos);
 	return imageRect().center();
 }
@@ -416,6 +457,11 @@ void PickerCanvas::applyHandle(int index, const QPointF &p)
 		h.pos = p;
 		obs_data_set_double(changes, s.key_x, std::round((p.x() - cx) * 2.0) / 2.0);
 		obs_data_set_double(changes, s.key_y, std::round((p.y() - cy) * 2.0) / 2.0);
+		break;
+	case HandleType::PointPixel:
+		h.pos = p;
+		obs_data_set_double(changes, s.key_x, std::round((p.x() - s.rest_x * _sourceWidth) * 2.0) / 2.0);
+		obs_data_set_double(changes, s.key_y, std::round((p.y() - s.rest_y * _sourceHeight) * 2.0) / 2.0);
 		break;
 	case HandleType::Angle: {
 		const QPointF anchor = toSource(anchorWidgetPos(h));
@@ -487,6 +533,43 @@ void PickerCanvas::paintEvent(QPaintEvent *)
 
 	p.setRenderHint(QPainter::Antialiasing);
 	obs_data_t *settings = obs_source_get_settings(_target);
+
+	// Point (px) handles form a grid (corner pin, mesh): connect neighbours,
+	// i.e. points whose rest positions are one grid step apart along x or y.
+	double step = 2.0;
+	for (const Handle &a : _handles) {
+		if (!a.visible || a.spec->type != HandleType::PointPixel)
+			continue;
+		for (const Handle &b : _handles) {
+			if (!b.visible || b.spec->type != HandleType::PointPixel)
+				continue;
+			for (double d :
+			     {std::abs(a.spec->rest_x - b.spec->rest_x), std::abs(a.spec->rest_y - b.spec->rest_y)})
+				if (d > 1e-6)
+					step = std::min(step, d);
+		}
+	}
+	for (int i = 0; i < (int)_handles.size(); i++) {
+		const Handle &a = _handles[i];
+		if (!a.visible || a.spec->type != HandleType::PointPixel)
+			continue;
+		for (int j = i + 1; j < (int)_handles.size(); j++) {
+			const Handle &b = _handles[j];
+			if (!b.visible || b.spec->type != HandleType::PointPixel)
+				continue;
+			const double dx = std::abs(a.spec->rest_x - b.spec->rest_x);
+			const double dy = std::abs(a.spec->rest_y - b.spec->rest_y);
+			const bool neighbours = (dx < 1e-6 && std::abs(dy - step) < 1e-6) ||
+						(dy < 1e-6 && std::abs(dx - step) < 1e-6);
+			if (!neighbours)
+				continue;
+			p.setPen(QPen(QColor(0, 0, 0, 140), 3.0));
+			p.drawLine(handleWidgetPos(i), handleWidgetPos(j));
+			p.setPen(QPen(QColor(76, 201, 240, 200), 1.0, Qt::DashLine));
+			p.drawLine(handleWidgetPos(i), handleWidgetPos(j));
+		}
+	}
+
 	for (int i = 0; i < (int)_handles.size(); i++) {
 		const Handle &h = _handles[i];
 		if (!h.visible)
@@ -526,6 +609,8 @@ void PickerCanvas::paintEvent(QPaintEvent *)
 			p.drawLine(pos - QPointF(0, kHandleRadius + 4), pos + QPointF(0, kHandleRadius + 4));
 		}
 
+		if (!h.spec->label)
+			continue;
 		QString label = T(h.spec->label);
 		// Number the mesh and free color points.
 		bool unused;

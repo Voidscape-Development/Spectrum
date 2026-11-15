@@ -89,6 +89,29 @@ Four retro and painterly looks, each off by default. Only the enabled ones run, 
 - **Composite:** blends another source or an image file onto the source with 26 Photoshop-style blend modes (multiply, screen, overlay, soft/hard/vivid/linear/pin light, color dodge/burn, linear dodge/burn, hard mix, difference, exclusion, subtract, divide, hue, saturation, color, luminosity, lighter/darker color...) and an opacity. Place the layer stretched, fit, filled, tiled or at its original size, then move, scale and rotate it. Composite over the source or only inside its alpha, swap the order to put the layer underneath, and fade it with an opacity mask from another source's brightness or alpha, or from a gradient.
 - **Edge:** toon/ink outlines (Sobel on brightness and color, or difference of Gaussians) with threshold, softness and line thickness plus optional cel shading; neon edges in a color, a gradient by edge direction or across the source, or the source's own colors, with a float glow; pencil sketch (XDoG lines with hatching); and emboss. Draw over the source, a solid color or transparency, with an overall amount.
 
+### Spectrum Warp (filter)
+Reshapes a source in 2D and 3D. Every mode maps output pixels back to the source, so edges stay anti-aliased and squeezed areas are averaged over each pixel's footprint instead of shimmering.
+
+- **Corner pin:** move the four corners anywhere; the mapping is a true perspective (projective) one, not a bilinear stretch.
+- **Mesh warp:** a 3x3 or 4x4 grid of control points, interpolated with smooth bicubic (Catmull-Rom) curves.
+- **Perspective tilt:** rotate the source in X, Y and Z with an adjustable field of view and zoom.
+- **Bend:** arc the source horizontally or vertically, up to a full circle.
+- **Page curl** and **roll:** peel the source back from a corner or edge, or roll it into a tube, with shading, a tinted back side and a soft shadow.
+- **Extra drawing area:** lets the result draw outside the source's original bounds.
+
+Corners and mesh points are offsets in pixels from where they start, so the defaults leave the source untouched at any size. The Position Picker has a handle for each corner and mesh point.
+
+### Spectrum Time FX (filter)
+Effects built from the source's recent frames.
+
+- **Echo:** blends up to 16 earlier frames, a set number of frames apart, fading with age.
+- **Feedback trails:** a float feedback buffer that fades each frame, with optional drift, scale and rotation per frame for tunnel and spiral trails, blended normally or with lighten, add or screen.
+- **Delayed ghost:** a delayed copy of the source at an opacity, with a tint and normal, add, screen, difference, multiply or lighten blending.
+- **Slit-scan:** each row, column, angled line or ring shows a different moment from a buffer of up to 240 frames, cross-faded between neighbouring frames so there are no steps.
+- **Freeze / strobe:** freeze and unfreeze with a hotkey or button, or hold every Nth frame for a strobe look.
+
+Past frames live in video memory: width x height x 4 bytes each (about 8 MB per frame at 1080p, 33 MB at 4K), capped at 240 frames or 1 GB. Everything is freed when the filter is disabled or its source is hidden, and the history restarts when the source changes size.
+
 ### Spectrum Animate (filter)
 Drives numeric settings of any filter on a source, or of the source itself. It works with OBS's built-in filters and with other plugins too.
 - **Drivers:** a waveform (sine, triangle, ramps, square, smooth random) with optional easing; keyframes; the level of an audio source with attack and release; the clock (seconds, minutes, hour of the day, day of the week/month, month); the mouse position across a screen; the brightness or the motion of another source; or another setting times a scale plus an offset (e.g. glow size = 2 x stroke width).
@@ -111,8 +134,8 @@ Scene transitions that blend in linear light, dither their output, keep HDR valu
 - **Presets:** every Spectrum filter, source and transition can save, load and delete named presets.
 - **React to Audio:** every Spectrum filter and source has a "React to Audio" group. Pick an audio source and up to two of the filter's own numeric settings with a From (silence) and To (full level) value, or add the amount to the value you set. Silence and full levels, attack and release shape the response; "Kick on Beats" jumps on transients such as drum hits instead and decays. The modulated values are never written into the filter's saved settings, so the values you set stay as they are.
 - **Hotkeys:** every Spectrum filter gets Enable and Disable hotkeys (bind one key to both to toggle), and every filter and source gets "Apply preset" and "Undo preset" hotkeys for each saved preset of its kind, in Settings > Hotkeys. Bindings are saved with the scene collection.
-- **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, mesh and color points, shape rotation and shadow offset, text shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, the light ray, flare and point light positions, the blur focus point, the Composite layer position, rotation and mask gradient, and the Edge emboss light and hatching angles. Changes show live, and Cancel restores the previous values.
-- **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort, Stylize, Retro, Composite and Edge filters interpolate between two filter states.
+- **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, mesh and color points, shape rotation and shadow offset, text shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, the light ray, flare and point light positions, the blur focus point, the Composite layer position, rotation and mask gradient, the Edge emboss light and hatching angles, Warp's corner pin corners and mesh points, and the Time FX slit-scan center and direction. Changes show live, and Cancel restores the previous values.
+- **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort, Stylize, Retro, Composite, Edge and Warp filters interpolate between two filter states.
 - **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame (marching dashes keep moving on a cached stroke).
 
 ## Building
