@@ -43,6 +43,13 @@ The same gradient engine is available as fills elsewhere: **Gradient** and **Gra
 ### Spectrum Shape (source)
 Rectangles (rounded), ellipses, polygons, stars, hearts, rings and crosses, drawn as distance fields so the edges stay crisp at any size. Shapes can be rotated, stretched and rounded, and filled with a color, a gradient or another source. Each shape has its own stroke (inside, centered or outside) and a soft drop shadow.
 
+### Spectrum Text (source)
+Text drawn from a signed distance field, so every effect stays crisp at any size and scale.
+
+- **Text:** multi-line text or a UTF-8 file (reloaded when it changes), any installed font, alignment, line and letter spacing, and word wrap. Qt does the shaping, so kerning, ligatures and right-to-left text work.
+- **Styling:** a color, gradient or source fill; an inside, centered or outside outline in a color or a gradient across its width; an outer glow; and a soft or hard drop shadow. Glows and shadows of neighbouring letters merge instead of doubling up, and text with no fill glows like a neon outline.
+- **Per-character animation:** typewriter (with a cursor), fade, slide, pop and drop intros with a delay between characters, played once or looped, and replayed when the source becomes active. Wave, bounce, shake and jitter motion, and a rainbow hue cycle.
+
 ### Spectrum Noise (source)
 Animated procedural backgrounds such as lava, plasma, aurora, fog, marble and cells. Choose value, Perlin, simplex, cell or cell-edge noise, layered as smooth fBm, turbulence or ridged noise. Add domain warping, flow and evolution, then map the result through a gradient.
 
@@ -66,7 +73,7 @@ Drives any numeric setting of any filter on a source, or of the source itself, f
 
 ### Presets, transitions and performance
 - **Presets:** every Spectrum filter and source can save, load and delete named presets.
-- **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, shape rotation and shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, and the light ray, flare and point light positions. Changes show live, and Cancel restores the previous values.
+- **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, shape rotation and shadow offset, text shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, and the light ray, flare and point light positions. Changes show live, and Cancel restores the previous values.
 - **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort and Stylize filters interpolate between two filter states.
 - **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame.
 

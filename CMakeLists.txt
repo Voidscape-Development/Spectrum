@@ -180,4 +180,10 @@ target_sources(
     src/animate/animate-filter.c
 )
 
+# Spectrum Text
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE src/text/text-layout.cpp src/text/text-layout.hpp src/text/text-source.cpp
+)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
