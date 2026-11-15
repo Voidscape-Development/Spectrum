@@ -1,0 +1,103 @@
+// Spectrum Blur Dissolve: the outgoing scene blurs out while the incoming
+// one blurs in, crossfading at the peak. Since blurring is linear, the
+// crossfade is blurred once: crossfade (and downsample) -> horizontal
+// Gaussian -> vertical Gaussian -> upsample, all in float, linear light.
+#include "transition-common.effect"
+
+uniform float mix_w = 0.0;     // how much of B
+uniform float2 src_texel;      // 1 / scene size
+uniform float down_scale = 1.0;
+uniform float2 blur_step;      // one texel of the blurred texture, along the blur
+uniform float sigma = 1.0;     // texels
+uniform int taps;
+
+// Crossfade at full resolution (no blur).
+float4 PSMix(VertData v_in) : TARGET
+{
+	return tr_output(tr_mix(tr_a(v_in.uv), tr_b(v_in.uv), mix_w), v_in.uv);
+}
+
+float4 mix_at(float2 uv)
+{
+	return tr_mix(tr_a(uv), tr_b(uv), mix_w);
+}
+
+// Crossfade and box downsample by down_scale (4 x 4 bilinear taps, each
+// averaging 2 x 2 pixels).
+float4 PSDown(VertData v_in) : TARGET
+{
+	if (down_scale <= 1.0)
+		return mix_at(v_in.uv);
+	float4 sum = float4(0.0, 0.0, 0.0, 0.0);
+	float span = min(down_scale, 8.0);
+	for (int y = 0; y < 4; y++) {
+		for (int x = 0; x < 4; x++) {
+			float2 o = (float2(float(x), float(y)) + 0.5) / 4.0 - 0.5;
+			sum += mix_at(v_in.uv + o * span * src_texel);
+		}
+	}
+	return sum / 16.0;
+}
+
+float gauss(float x)
+{
+	return exp(-0.5 * x * x / (sigma * sigma));
+}
+
+// Separable Gaussian, two texels per tap (linear sampling).
+float4 PSBlur(VertData v_in) : TARGET
+{
+	float4 sum = image.Sample(textureSampler, v_in.uv);
+	float total = 1.0;
+	for (int i = 1; i <= taps; i += 2) {
+		float w1 = gauss(float(i));
+		float w2 = gauss(float(i + 1));
+		float w = w1 + w2;
+		float o = (float(i) * w1 + float(i + 1) * w2) / w;
+		sum += image.Sample(textureSampler, v_in.uv + blur_step * o) * w;
+		sum += image.Sample(textureSampler, v_in.uv - blur_step * o) * w;
+		total += 2.0 * w;
+	}
+	return sum / total;
+}
+
+float4 PSOut(VertData v_in) : TARGET
+{
+	return tr_output(image.Sample(textureSampler, v_in.uv), v_in.uv);
+}
+
+technique Mix
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSMix(v_in);
+	}
+}
+
+technique Down
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDown(v_in);
+	}
+}
+
+technique Blur
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSBlur(v_in);
+	}
+}
+
+technique Out
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSOut(v_in);
+	}
+}

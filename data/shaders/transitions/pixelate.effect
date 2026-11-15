@@ -1,0 +1,52 @@
+// Spectrum Pixelate: the picture breaks into ever larger cells, crossfades
+// at the peak, and resolves into the incoming scene.
+#include "transition-common.effect"
+
+uniform float px_size = 48.0;      // px, largest cell
+uniform float px_crossfade = 30.0; // %
+uniform float px_center_x = 50.0;  // %, where the cell grid is anchored
+uniform float px_center_y = 50.0;  // %
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	float tri = 1.0 - abs(2.0 * progress - 1.0);
+	float env = tri * tri * (3.0 - 2.0 * tri);
+	float cell = 1.0 + (max(px_size, 1.0) - 1.0) * env;
+	float c = saturate(px_crossfade / 100.0);
+	float w = smoothstep(0.5 - 0.5 * c - 1e-4, 0.5 + 0.5 * c + 1e-4, progress);
+
+	float4 a;
+	float4 b;
+	if (cell < 1.05) {
+		a = tr_a(uv);
+		b = tr_b(uv);
+	} else {
+		// The average over the cell: 4 x 4 bilinear taps.
+		float2 anchor = float2(px_center_x, px_center_y) * 0.01 * uv_size;
+		float2 pix = uv * uv_size;
+		float2 corner = floor((pix - anchor) / cell) * cell + anchor;
+		a = float4(0.0, 0.0, 0.0, 0.0);
+		b = float4(0.0, 0.0, 0.0, 0.0);
+		for (int y = 0; y < 4; y++) {
+			for (int x = 0; x < 4; x++) {
+				float2 p = corner + (float2(float(x), float(y)) + 0.5) * (cell / 4.0);
+				float2 q = clamp(p, float2(0.5, 0.5), uv_size - 0.5) / uv_size;
+				a += tr_a(q);
+				b += tr_b(q);
+			}
+		}
+		a /= 16.0;
+		b /= 16.0;
+	}
+	return tr_output(tr_mix(a, b, w), uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDraw(v_in);
+	}
+}

@@ -23,6 +23,10 @@
 #define ALGO_PIXELATE_LABEL "BlurFilter.Algorithm.Pixelate"
 #define ALGO_TEMPORAL 5
 #define ALGO_TEMPORAL_LABEL "BlurFilter.Algorithm.Temporal"
+#define ALGO_LENS 6
+#define ALGO_LENS_LABEL "BlurFilter.Algorithm.Lens"
+#define ALGO_FROSTED 7
+#define ALGO_FROSTED_LABEL "BlurFilter.Algorithm.Frosted"
 
 #define TYPE_NONE 0
 #define TYPE_NONE_LABEL "None"
@@ -38,6 +42,34 @@
 #define TYPE_TILTSHIFT_LABEL "BlurFilter.Type.TiltShift"
 #define TYPE_VECTOR 6
 #define TYPE_VECTOR_LABEL "BlurFilter.Type.Vector"
+#define TYPE_DEPTH 7
+#define TYPE_DEPTH_LABEL "BlurFilter.Type.Depth"
+
+// Lens (bokeh) aperture shapes
+#define LENS_SHAPE_CIRCLE 0
+#define LENS_SHAPE_HEXAGON 1
+#define LENS_SHAPE_OCTAGON 2
+#define LENS_SHAPE_POLYGON 3
+
+// Lens sample quality presets
+#define LENS_QUALITY_DRAFT 0
+#define LENS_QUALITY_NORMAL 1
+#define LENS_QUALITY_HIGH 2
+#define LENS_QUALITY_ULTRA 3
+
+// Where the depth blur reads its per-pixel depth from
+#define DEPTH_MAP_LUMINANCE 0
+#define DEPTH_MAP_ALPHA 1
+#define DEPTH_MAP_EFFECT_MASK 2
+
+#define DEPTH_FOCUS_DISTANCE 0
+#define DEPTH_FOCUS_POINT 1
+
+// Frosted glass surface patterns
+#define FROST_STYLE_FROSTED 0
+#define FROST_STYLE_RIBBED 1
+#define FROST_STYLE_PEBBLED 2
+#define FROST_STYLE_RIPPLED 3
 
 #define PIXELATE_TYPE_SQUARE 0
 #define PIXELATE_TYPE_SQUARE_LABEL "BlurFilter.Pixelate.Square"
@@ -264,6 +296,61 @@ struct blur_filter_data {
 	float temporal_clear_threshold;
 	bool temporal_prior_stored;
 
+	// Lens (bokeh) blur
+	int lens_shape;
+	int lens_blades;
+	float lens_rotation;
+	float lens_roundness;
+	int lens_quality;
+	bool lens_highlights;
+	float lens_highlight_threshold;
+	float lens_highlight_gain;
+	// Aperture sample offsets (RGBA32F, one texel per sample) and the
+	// parameters they were built for.
+	gs_texture_t *lens_kernel;
+	float lens_kernel_key[5];
+	gs_texrender_t *lens_linear;
+	gs_texrender_t *lens_coc;
+	gs_texrender_t *lens_tile;
+	gs_texrender_t *lens_tile_max;
+	gs_texrender_t *lens_half;
+	gs_texrender_t *lens_quarter;
+
+	// Depth blur (lens algorithm, depth type)
+	int depth_map;
+	external_source_t depth_source;
+	gs_texrender_t *depth_source_texrender;
+	bool depth_invert;
+	int depth_focus_mode;
+	float depth_focus_distance;
+	float depth_focus_range;
+	float depth_focus_falloff;
+	float depth_focus_x;
+	float depth_focus_y;
+
+	// Frosted glass
+	int frost_style;
+	float frost_grain;
+	float frost_amount;
+	float frost_angle;
+	bool frost_tint;
+	struct vec4 frost_tint_color; // linear RGB
+	float frost_tint_amount;
+	gs_texrender_t *frost_linear;
+	gs_texrender_t *frost_blur;
+
+	// Effect mask rendered as a map (used as the depth map). When set,
+	// the mask passes write the mask value into mask_map_texrender
+	// instead of mixing input and output.
+	bool mask_as_map;
+	bool mask_map_rendered;
+	gs_texrender_t *mask_map_texrender;
+	gs_texture_t *mask_black;
+	gs_texture_t *mask_white;
+	// Set by an algorithm's render when it consumed the effect mask itself,
+	// so it isn't applied again afterwards.
+	bool skip_effect_mask;
+
 	// Guards every external_source_t in this struct.
 	pthread_mutex_t sources_mutex;
 	// Seconds until we next retry resolving a named source that was not
@@ -351,5 +438,10 @@ extern obs_source_t *external_source_get(blur_filter_data_t *filter, external_so
 // color space and returns the resulting texture, or NULL.
 extern gs_texture_t *render_source_to_texrender(obs_source_t *source, gs_texrender_t **texrender,
 						enum gs_color_space space);
+
+// Renders the configured effect mask as a grayscale map (white = masked
+// area) and returns it, or NULL if there is no effect mask. Must be called
+// from the render callback.
+extern gs_texture_t *blur_render_effect_mask_map(blur_filter_data_t *filter);
 
 extern float (*move_get_transition_filter)(obs_source_t *filter_from, obs_source_t **filter_to);

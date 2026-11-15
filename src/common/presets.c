@@ -4,7 +4,9 @@
 // <module config>/presets.json as {"<id>": [{"name": ..., "settings": {...}}]}.
 
 #include "presets.h"
+#include "audio-reactive.h"
 #include "position-picker.hpp"
+#include "source-hooks.h"
 
 #include <util/platform.h>
 
@@ -97,6 +99,7 @@ static bool save_clicked(obs_properties_t *props, obs_property_t *p, void *data)
 
 	obs_data_set_string(settings, KEY_LIST, name);
 	fill_list(obs_properties_get(props, KEY_LIST), id);
+	spectrum_hooks_presets_changed(id);
 
 	obs_data_array_release(presets);
 	obs_data_release(all);
@@ -105,30 +108,27 @@ static bool save_clicked(obs_properties_t *props, obs_property_t *p, void *data)
 	return true;
 }
 
-static bool load_clicked(obs_properties_t *props, obs_property_t *p, void *data)
+bool spectrum_presets_apply(obs_source_t *source, const char *name)
 {
-	UNUSED_PARAMETER(props);
-	UNUSED_PARAMETER(p);
-	obs_source_t *source = data;
+	if (!source || !name || !*name)
+		return false;
 	obs_data_t *settings = obs_source_get_settings(source);
-	const char *name = obs_data_get_string(settings, KEY_LIST);
 	const char *id = obs_source_get_unversioned_id(source);
+	char *keep_name = bstrdup(name); // `name` may point into settings
 	bool loaded = false;
 
 	obs_data_t *all = load_all();
 	obs_data_array_t *presets = obs_data_get_array(all, id);
-	for (size_t i = 0; presets && name && *name && i < obs_data_array_count(presets); i++) {
+	for (size_t i = 0; presets && !loaded && i < obs_data_array_count(presets); i++) {
 		obs_data_t *item = obs_data_array_item(presets, i);
-		if (strcmp(obs_data_get_string(item, "name"), name) == 0) {
+		if (strcmp(obs_data_get_string(item, "name"), keep_name) == 0) {
 			obs_data_t *preset = obs_data_get_obj(item, "settings");
 			// Replace (not merge) the settings, keeping the preset UI
 			// state, so values left at their defaults reset too.
-			char *keep_name = bstrdup(name);
 			obs_data_clear(settings);
 			obs_data_apply(settings, preset);
 			obs_data_set_string(settings, KEY_LIST, keep_name);
 			obs_data_set_string(settings, KEY_NAME, keep_name);
-			bfree(keep_name);
 			obs_data_release(preset);
 			loaded = true;
 		}
@@ -136,10 +136,37 @@ static bool load_clicked(obs_properties_t *props, obs_property_t *p, void *data)
 	}
 	obs_data_array_release(presets);
 	obs_data_release(all);
+	bfree(keep_name);
 
 	if (loaded)
 		obs_source_update(source, settings);
 	obs_data_release(settings);
+	return loaded;
+}
+
+void spectrum_presets_enum(const char *id, void (*callback)(void *param, const char *name), void *param)
+{
+	obs_data_t *all = load_all();
+	obs_data_array_t *presets = obs_data_get_array(all, id);
+	for (size_t i = 0; presets && i < obs_data_array_count(presets); i++) {
+		obs_data_t *item = obs_data_array_item(presets, i);
+		callback(param, obs_data_get_string(item, "name"));
+		obs_data_release(item);
+	}
+	obs_data_array_release(presets);
+	obs_data_release(all);
+}
+
+static bool load_clicked(obs_properties_t *props, obs_property_t *p, void *data)
+{
+	UNUSED_PARAMETER(props);
+	UNUSED_PARAMETER(p);
+	obs_source_t *source = data;
+	obs_data_t *settings = obs_source_get_settings(source);
+	char *name = bstrdup(obs_data_get_string(settings, KEY_LIST));
+	obs_data_release(settings);
+	const bool loaded = spectrum_presets_apply(source, name);
+	bfree(name);
 	return loaded;
 }
 
@@ -166,6 +193,7 @@ static bool delete_clicked(obs_properties_t *props, obs_property_t *p, void *dat
 		save_all(all);
 		obs_data_set_string(settings, KEY_LIST, "");
 		fill_list(obs_properties_get(props, KEY_LIST), id);
+		spectrum_hooks_presets_changed(id);
 	}
 	obs_data_array_release(presets);
 	obs_data_release(all);
@@ -178,6 +206,8 @@ void spectrum_presets_properties(obs_properties_t *props, obs_source_t *source)
 	if (!source)
 		return;
 	spectrum_position_picker_properties(props, source);
+	if (obs_source_get_type(source) != OBS_SOURCE_TYPE_TRANSITION)
+		spectrum_reactive_properties(props, source);
 	obs_properties_t *group = obs_properties_create();
 
 	obs_property_t *list = obs_properties_add_list(group, KEY_LIST, obs_module_text("Presets.Preset"),

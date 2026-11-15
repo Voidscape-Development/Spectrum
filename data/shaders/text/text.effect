@@ -1,0 +1,236 @@
+// Spectrum Text: glyphs drawn from a signed distance field atlas
+// (src/text/text-layout.cpp, distances in font px).
+//
+// Mask:  per glyph, into a float target with MAX blending: r = shadow,
+//        g = glow, b = outline coverage, a = position across the outline.
+//        The max over glyphs is the effect of the union of the glyphs, so
+//        neighbouring glyphs' shadows and glows don't double up.
+// Under: shadow and glow from the mask.
+// Fill:  per glyph, straight to the output.
+// Over:  the outline from the mask, over the fill.
+#include "../fx/fx-common.effect"
+
+uniform texture2d sdf_tex;
+uniform texture2d fill_tex;
+uniform texture2d mask_tex;
+uniform float2 atlas_size = {1.0, 1.0};
+
+// Per glyph.
+uniform float4 g_quad = {0.0, 0.0, 1.0, 1.0};   // quad origin and size, glyph px
+uniform float4 g_region = {0.0, 0.0, 1.0, 1.0}; // atlas region origin (glyph px) and size (texels)
+uniform float2 g_atlas_pos = {0.0, 0.0};        // atlas region, texels
+uniform float g_scale = 1.0;                    // texels per glyph px
+uniform float2 g_rest = {0.0, 0.0};             // pen position at rest, source px
+uniform float g_alpha = 1.0;
+uniform float g_hue = 0.0;                      // rainbow hue, radians
+uniform float2 g_shadow_off = {0.0, 0.0};       // shadow offset, glyph px
+
+// Settings.
+uniform int tx_fill_type; // 0 none, 1 color, 2 gradient, 3 source
+uniform float4 tx_fill_color;
+uniform bool tx_outline;
+uniform float tx_outline_width = 0.0;
+uniform int tx_outline_position; // 1 inside, 2 center, 3 outside
+uniform int tx_outline_type;     // 1 color, 2 gradient across
+uniform float4 tx_outline_color;
+uniform bool tx_glow;
+uniform float tx_glow_size = 16.0;
+uniform float tx_glow_intensity = 100.0;
+uniform float4 tx_glow_color;
+uniform bool tx_shadow;
+uniform float tx_shadow_softness = 4.0;
+uniform float4 tx_shadow_color;
+uniform bool tx_rainbow;
+uniform float tx_rainbow_amount = 100.0;
+uniform float tx_opacity = 100.0;
+
+sampler_state sdfSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+// Signed distance (glyph px) at a glyph local position. Outside the atlas
+// region the distance continues from the region's edge.
+float glyph_sdf(float2 local)
+{
+	float2 t = (local - g_region.xy) * g_scale;
+	float2 tc = clamp(t, float2(0.5, 0.5), g_region.zw - float2(0.5, 0.5));
+	float d = sdf_tex.Sample(sdfSampler, (g_atlas_pos + tc) / atlas_size).r;
+	return d + length(t - tc) / g_scale;
+}
+
+float coverage(float d, float aa)
+{
+	return saturate(0.5 - d / max(aa, 1e-4));
+}
+
+bool outline_on()
+{
+	return tx_outline && tx_outline_width > 0.0;
+}
+
+// Inner and outer edge of the outline (distance from the glyph edge).
+float2 outline_range()
+{
+	float w = max(tx_outline_width, 0.0);
+	if (tx_outline_position == 1)
+		return float2(-w, 0.0);
+	if (tx_outline_position == 2)
+		return float2(-0.5 * w, 0.5 * w);
+	return float2(0.0, w);
+}
+
+float outer_edge()
+{
+	return outline_on() ? outline_range().y : 0.0;
+}
+
+// Distance to what is visible: the glyph and its outline, or only the
+// outline when there is no fill (so a hollow text glows and casts a
+// shadow like its outline).
+float silhouette_distance(float d)
+{
+	if (tx_fill_type == 0 && outline_on()) {
+		float2 r = outline_range();
+		return max(r.x - d, d - r.y);
+	}
+	return d - outer_edge();
+}
+
+float2 glyph_local(float2 uv)
+{
+	return g_quad.xy + uv * g_quad.zw;
+}
+
+// Straight alpha "a over b".
+float4 over(float4 a, float4 b)
+{
+	float out_a = a.a + b.a * (1.0 - a.a);
+	float3 premul = a.rgb * a.a + b.rgb * b.a * (1.0 - a.a);
+	return float4(out_a > 0.0 ? premul / out_a : float3(0.0, 0.0, 0.0), out_a);
+}
+
+/* Mask ----------------------------------------------------------------- */
+
+float4 PSMask(VertData v_in) : TARGET
+{
+	float2 local = glyph_local(v_in.uv);
+	float d = glyph_sdf(local);
+	float aa = length(float2(ddx(d), ddy(d))) + 1e-4;
+	float4 m = float4(0.0, 0.0, 0.0, 0.0);
+
+	if (outline_on()) {
+		float2 r = outline_range();
+		m.b = coverage(d - r.y, aa) * (1.0 - coverage(d - r.x, aa));
+		m.a = saturate((r.y - d) / max(r.y - r.x, 1e-3));
+	}
+	if (tx_glow) {
+		float x = max(silhouette_distance(d), 0.0) / max(tx_glow_size, 0.5);
+		m.g = saturate(exp(-4.5 * x * x) * max(tx_glow_intensity, 0.0) / 100.0);
+	}
+	if (tx_shadow) {
+		float ds = silhouette_distance(glyph_sdf(local - g_shadow_off));
+		float aas = length(float2(ddx(ds), ddy(ds))) + 1e-4;
+		float soft = max(tx_shadow_softness, 0.0);
+		m.r = soft > aas ? 1.0 - smoothstep(-soft, soft, ds) : coverage(ds, aas);
+	}
+	m.rgb *= saturate(g_alpha);
+	return m;
+}
+
+/* Fill ----------------------------------------------------------------- */
+
+float4 fill_color(float2 uv)
+{
+	if (tx_fill_type == 1)
+		return tx_fill_color;
+	if (tx_fill_type == 2 || tx_fill_type == 3) {
+		// Fill textures are sRGB encoded, premultiplied in linear light.
+		float4 t = fill_tex.Sample(textureSampler, uv);
+		float3 lin = srgb_to_linear(t.rgb);
+		lin = t.a > 0.0 ? lin / t.a : float3(0.0, 0.0, 0.0);
+		return float4(linear_to_srgb(lin), t.a);
+	}
+	return float4(0.0, 0.0, 0.0, 0.0);
+}
+
+float4 PSFill(VertData v_in) : TARGET
+{
+	float2 local = glyph_local(v_in.uv);
+	float d = glyph_sdf(local);
+	float aa = length(float2(ddx(d), ddy(d))) + 1e-4;
+
+	// With an outline, the fill ends half a pixel under its inner edge so
+	// the two meet without a seam.
+	float edge = 0.0;
+	if (outline_on())
+		edge = outline_range().x + min(0.5, 0.5 * tx_outline_width);
+
+	float2 src = g_rest + local;
+	float2 uv = src / uv_size;
+	float4 c = fill_color(uv);
+	if (tx_rainbow) {
+		float3 lab = srgb_to_oklab(c.rgb);
+		float3 rb = float3(0.76, 0.16 * cos(g_hue), 0.16 * sin(g_hue));
+		c.rgb = oklab_to_srgb(lerp(lab, rb, saturate(tx_rainbow_amount / 100.0)));
+	}
+	c.a *= coverage(d - edge, aa) * saturate(g_alpha) * saturate(tx_opacity / 100.0);
+	return fx_output(c, uv);
+}
+
+/* Composites ----------------------------------------------------------- */
+
+float4 PSUnder(VertData v_in) : TARGET
+{
+	float4 m = mask_tex.Sample(textureSampler, v_in.uv);
+	float4 shadow = float4(tx_shadow_color.rgb, tx_shadow_color.a * saturate(m.r));
+	float4 glow = float4(tx_glow_color.rgb, tx_glow_color.a * saturate(m.g));
+	float4 c = over(tx_glow ? glow : float4(0.0, 0.0, 0.0, 0.0), tx_shadow ? shadow : float4(0.0, 0.0, 0.0, 0.0));
+	c.a *= saturate(tx_opacity / 100.0);
+	return fx_output(c, v_in.uv);
+}
+
+float4 PSOver(VertData v_in) : TARGET
+{
+	float4 m = mask_tex.Sample(textureSampler, v_in.uv);
+	float4 c = tx_outline_type == 2 ? gradient_sample(1.0 - saturate(m.a)) : tx_outline_color;
+	c.a *= saturate(m.b) * saturate(tx_opacity / 100.0);
+	return fx_output(c, v_in.uv);
+}
+
+technique Mask
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSMask(v_in);
+	}
+}
+
+technique Fill
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSFill(v_in);
+	}
+}
+
+technique Under
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSUnder(v_in);
+	}
+}
+
+technique Over
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSOver(v_in);
+	}
+}

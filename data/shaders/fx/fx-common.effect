@@ -224,6 +224,54 @@ float4 fx_output(float4 c, float2 uv)
 #define BLEND_COLOR 7
 #define BLEND_LUMINOSITY 8
 #define BLEND_HUE 9
+// Added later; the values above keep their meaning (saved settings).
+#define BLEND_DARKEN 10
+#define BLEND_LIGHTEN 11
+#define BLEND_COLOR_BURN 12
+#define BLEND_COLOR_DODGE 13
+#define BLEND_LINEAR_BURN 14
+#define BLEND_HARD_LIGHT 15
+#define BLEND_VIVID_LIGHT 16
+#define BLEND_LINEAR_LIGHT 17
+#define BLEND_PIN_LIGHT 18
+#define BLEND_HARD_MIX 19
+#define BLEND_DIFFERENCE 20
+#define BLEND_EXCLUSION 21
+#define BLEND_SUBTRACT 22
+#define BLEND_DIVIDE 23
+#define BLEND_SATURATION 24
+#define BLEND_LIGHTER_COLOR 25
+#define BLEND_DARKER_COLOR 26
+
+float blend_burn_c(float a, float b)
+{
+	if (a >= 1.0)
+		return 1.0;
+	if (b <= 0.0)
+		return 0.0;
+	return 1.0 - min(1.0, (1.0 - a) / b);
+}
+
+float blend_dodge_c(float a, float b)
+{
+	if (a <= 0.0)
+		return 0.0;
+	if (b >= 1.0)
+		return 1.0;
+	return min(1.0, a / (1.0 - b));
+}
+
+float blend_vivid_c(float a, float b)
+{
+	return b < 0.5 ? blend_burn_c(a, 2.0 * b) : blend_dodge_c(a, 2.0 * b - 1.0);
+}
+
+float blend_divide_c(float a, float b)
+{
+	if (b <= 0.0)
+		return a > 0.0 ? 1.0 : 0.0;
+	return min(1.0, a / b);
+}
 
 float3 blend_rgb(float3 a, float3 b, int mode)
 {
@@ -237,7 +285,41 @@ float3 blend_rgb(float3 a, float3 b, int mode)
 		return lerp(a - (1.0 - 2.0 * b) * a * (1.0 - a), a + (2.0 * b - 1.0) * (sqrt(a) - a), step(0.5, b));
 	if (mode == BLEND_ADD)
 		return saturate(a + b);
-	if (mode == BLEND_COLOR || mode == BLEND_LUMINOSITY || mode == BLEND_HUE) {
+	if (mode < BLEND_DARKEN && mode != BLEND_COLOR && mode != BLEND_LUMINOSITY && mode != BLEND_HUE)
+		return b;
+	if (mode == BLEND_DARKEN)
+		return min(a, b);
+	if (mode == BLEND_LIGHTEN)
+		return max(a, b);
+	if (mode == BLEND_COLOR_BURN)
+		return float3(blend_burn_c(a.r, b.r), blend_burn_c(a.g, b.g), blend_burn_c(a.b, b.b));
+	if (mode == BLEND_COLOR_DODGE)
+		return float3(blend_dodge_c(a.r, b.r), blend_dodge_c(a.g, b.g), blend_dodge_c(a.b, b.b));
+	if (mode == BLEND_LINEAR_BURN)
+		return saturate(a + b - 1.0);
+	if (mode == BLEND_HARD_LIGHT)
+		return lerp(2.0 * a * b, 1.0 - 2.0 * (1.0 - a) * (1.0 - b), step(0.5, b));
+	if (mode == BLEND_VIVID_LIGHT)
+		return float3(blend_vivid_c(a.r, b.r), blend_vivid_c(a.g, b.g), blend_vivid_c(a.b, b.b));
+	if (mode == BLEND_LINEAR_LIGHT)
+		return saturate(a + 2.0 * b - 1.0);
+	if (mode == BLEND_PIN_LIGHT)
+		return lerp(min(a, 2.0 * b), max(a, 2.0 * b - 1.0), step(0.5, b));
+	if (mode == BLEND_HARD_MIX)
+		return step(float3(1.0, 1.0, 1.0), a + b);
+	if (mode == BLEND_DIFFERENCE)
+		return abs(a - b);
+	if (mode == BLEND_EXCLUSION)
+		return a + b - 2.0 * a * b;
+	if (mode == BLEND_SUBTRACT)
+		return max(a - b, float3(0.0, 0.0, 0.0));
+	if (mode == BLEND_DIVIDE)
+		return float3(blend_divide_c(a.r, b.r), blend_divide_c(a.g, b.g), blend_divide_c(a.b, b.b));
+	if (mode == BLEND_LIGHTER_COLOR)
+		return luma(b) > luma(a) ? b : a;
+	if (mode == BLEND_DARKER_COLOR)
+		return luma(b) < luma(a) ? b : a;
+	if (mode == BLEND_COLOR || mode == BLEND_LUMINOSITY || mode == BLEND_HUE || mode == BLEND_SATURATION) {
 		float3 la = srgb_to_oklab(a);
 		float3 lb = srgb_to_oklab(b);
 		float3 r;
@@ -245,6 +327,11 @@ float3 blend_rgb(float3 a, float3 b, int mode)
 			r = float3(la.x, lb.yz);
 		} else if (mode == BLEND_LUMINOSITY) {
 			r = float3(lb.x, la.yz);
+		} else if (mode == BLEND_SATURATION) {
+			// a's lightness and hue with b's chroma.
+			float ca = length(la.yz);
+			float cb = length(lb.yz);
+			r = float3(la.x, ca > 1e-5 ? la.yz * (cb / ca) : la.yz);
 		} else {
 			float ca = length(la.yz);
 			float cb = length(lb.yz);

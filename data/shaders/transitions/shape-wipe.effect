@@ -1,0 +1,127 @@
+// Spectrum Shape Wipe: an iris wipe through a circle, rectangle, diamond,
+// star, heart or polygon drawn as a distance field.
+#include "transition-common.effect"
+
+uniform int sw_shape; // 1 circle, 2 rectangle, 3 diamond, 4 star, 5 heart, 6 polygon
+uniform float sw_center_x = 50.0; // %
+uniform float sw_center_y = 50.0; // %
+uniform float sw_rotation = 0.0;  // degrees
+uniform float sw_spin = 0.0;      // degrees over the transition
+uniform int sw_points;
+uniform float sw_inner = 50.0; // %
+uniform int sw_sides;
+uniform bool sw_stretch;
+uniform int sw_direction; // 1 open (B grows), 2 close (A shrinks)
+uniform float sw_softness = 2.0; // px
+uniform float sw_cover = 1000.0; // px: the size that covers the frame (set by the plugin)
+
+/* Unit shapes (about 1 in radius), shared with shape_sd_unit() in
+ * src/transitions/shape-wipe.c. */
+
+float sw_dot2(float2 v)
+{
+	return dot(v, v);
+}
+
+float sw_box(float2 p)
+{
+	float2 q = abs(p) - float2(1.0, 1.0);
+	return min(max(q.x, q.y), 0.0) + length(max(q, float2(0.0, 0.0)));
+}
+
+float sw_polygon(float2 p, float n)
+{
+	float an = PI / n;
+	float2 acs = float2(cos(an), sin(an));
+	float a = atan2(p.x, -p.y);
+	float bn = (a - 2.0 * an * floor(a / (2.0 * an))) - an;
+	p = length(p) * float2(cos(bn), abs(sin(bn)));
+	p -= acs;
+	p.y += clamp(-p.y, 0.0, acs.y);
+	return length(p) * sign(p.x);
+}
+
+float sw_star(float2 p, float n, float m)
+{
+	float an = PI / n;
+	float en = PI / m;
+	float2 acs = float2(cos(an), sin(an));
+	float2 ecs = float2(cos(en), sin(en));
+	float a = atan2(p.x, -p.y);
+	float bn = (a - 2.0 * an * floor(a / (2.0 * an))) - an;
+	p = length(p) * float2(cos(bn), abs(sin(bn)));
+	p -= acs;
+	p += ecs * clamp(-dot(p, ecs), 0.0, acs.y / ecs.y);
+	return length(p) * sign(p.x);
+}
+
+float sw_heart(float2 p)
+{
+	// Unit space is about 1.2 wide and 1.1 high, y up, tip at the origin.
+	float k = 2.0 / 1.2;
+	p = float2(p.x, -p.y) / k + float2(0.0, 0.55);
+	p.x = abs(p.x);
+	float d;
+	if (p.y + p.x > 1.0)
+		d = sqrt(sw_dot2(p - float2(0.25, 0.75))) - sqrt(2.0) / 4.0;
+	else
+		d = sqrt(min(sw_dot2(p - float2(0.0, 1.0)), sw_dot2(p - 0.5 * max(p.x + p.y, 0.0)))) * sign(p.x - p.y);
+	return d * k;
+}
+
+float sw_unit(float2 p)
+{
+	if (sw_shape == 2)
+		return sw_box(p);
+	if (sw_shape == 3)
+		return sw_polygon(p, 4.0);
+	if (sw_shape == 4) {
+		float n = max(float(sw_points), 3.0);
+		return sw_star(p, n, 2.0 + (n - 2.0) * saturate(sw_inner / 100.0));
+	}
+	if (sw_shape == 5)
+		return sw_heart(p);
+	if (sw_shape == 6)
+		return sw_polygon(p, max(float(sw_sides), 3.0));
+	return length(p) - 1.0;
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	float2 p = uv * uv_size - float2(sw_center_x, sw_center_y) * 0.01 * uv_size;
+	float rot = radians(sw_rotation + sw_spin * progress);
+	float cs = cos(rot);
+	float sn = sin(rot);
+	p = float2(cs * p.x + sn * p.y, -sn * p.x + cs * p.y);
+	if (sw_stretch)
+		p.x *= uv_size.y / uv_size.x;
+
+	bool open = sw_direction != 2;
+	float amount = open ? progress : 1.0 - progress;
+	float r = max(sw_cover * amount, 1e-3);
+	float m = tr_margin(sw_softness, tr_edge_width, 1.0);
+	// Distance to the shape, px (exact without stretching), pulled in
+	// by the margin at the start so nothing shows at 0.
+	float d = r * sw_unit(p / r) + m * (1.0 - amount);
+
+	float inside = tr_cover(d, 0.0, sw_softness, 1.0);
+	float w = open ? inside : 1.0 - inside;
+	if (progress <= 0.0)
+		w = 0.0;
+	else if (progress >= 1.0)
+		w = 1.0;
+
+	float4 col = tr_mix(tr_a(uv), tr_b(uv), w);
+	col = tr_apply_edge(col, open ? d : -d, tr_edge_width, 1.0, 1.0);
+	return tr_output(col, uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDraw(v_in);
+	}
+}

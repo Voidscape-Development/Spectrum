@@ -1,0 +1,73 @@
+// Spectrum Luma Wipe: the incoming scene appears through the dark parts of
+// a luma map (an image, any source or built-in clouds) first, with a soft
+// edge and an optional edge glow.
+#include "transition-common.effect"
+
+uniform int lw_type; // 1 image, 2 source, 3 clouds
+uniform float lw_softness = 10.0; // %
+uniform bool lw_invert;
+uniform float lw_contrast = 100.0;  // %
+uniform float lw_scale = 200.0;     // clouds, px
+uniform float lw_seed = 0.0;
+uniform texture2d lw_map;
+uniform float lw_map_ok = 0.0;
+uniform float lw_map_linear = 0.0; // the map was rendered in linear light
+
+float clouds(float2 pix)
+{
+	float2 p = pix / max(lw_scale, 1.0) + float2(lw_seed * 17.31, lw_seed * 5.77);
+	float sum = 0.0;
+	float amp = 0.5;
+	float norm = 0.0;
+	for (int i = 0; i < 5; i++) {
+		sum += value_noise(p) * amp;
+		norm += amp;
+		p = float2(p.x * 1.6 - p.y * 1.2, p.x * 1.2 + p.y * 1.6) + float2(3.1, 7.7);
+		amp *= 0.5;
+	}
+	// Spread the bell-shaped fBm distribution over most of [0, 1].
+	return saturate((sum / norm - 0.5) * 2.6 + 0.5);
+}
+
+float map_value(float2 uv)
+{
+	if (lw_type == 3 || lw_map_ok < 0.5)
+		return clouds(uv * uv_size);
+	float4 m = lw_map.Sample(textureSampler, uv);
+	float3 enc = lw_map_linear > 0.5 ? linear_to_srgb(saturate(m.rgb)) : m.rgb;
+	return luma(enc);
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	float q = map_value(uv);
+	q = saturate((q - 0.5) * lw_contrast / 100.0 + 0.5);
+	if (lw_invert)
+		q = 1.0 - q;
+
+	float soft = lw_softness / 100.0;
+	float e = tr_edge_width / 100.0;
+	float m = tr_margin(soft, e, 1.0 / 255.0);
+	float f = tr_front(m);
+	float aa = max(fwidth(q), 1.0 / 1024.0);
+
+	float w = tr_cover(q, f, soft, aa);
+	if (progress <= 0.0)
+		w = 0.0;
+	else if (progress >= 1.0)
+		w = 1.0;
+
+	float4 col = tr_mix(tr_a(uv), tr_b(uv), w);
+	col = tr_apply_edge(col, q - f, e, aa, 1.0);
+	return tr_output(col, uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDraw(v_in);
+	}
+}

@@ -38,6 +38,21 @@ enum stroke_position {
 	STROKE_POSITION_INNER_CONTOUR
 };
 
+#define STROKE_DASH_SOLID_LABEL "StrokeFilter.Dash.Solid"
+#define STROKE_DASH_DASHED_LABEL "StrokeFilter.Dash.Dashed"
+#define STROKE_DASH_DOTTED_LABEL "StrokeFilter.Dash.Dotted"
+
+enum stroke_dash_style {
+	STROKE_DASH_SOLID = 0,
+	STROKE_DASH_DASHED,
+	STROKE_DASH_DOTTED,
+};
+
+enum stroke_dash_cap {
+	STROKE_DASH_CAP_SQUARE = 0,
+	STROKE_DASH_CAP_ROUND,
+};
+
 struct stroke_filter_data;
 typedef struct stroke_filter_data stroke_filter_data_t;
 
@@ -70,6 +85,12 @@ struct stroke_filter_data {
 	gs_texrender_t *buffer_b;
 	// The finished distance field: one of the two buffers above, not owned.
 	gs_texrender_t *distance_field;
+	// Dashes: arc length along the contour (see jump-flood-common.effect).
+	// Ping-pong state buffers and the finished field (RGBA32F, one texel
+	// more than the source in each direction).
+	gs_texrender_t *arc_a;
+	gs_texrender_t *arc_b;
+	gs_texrender_t *arc_field;
 
 	bool input_texture_generated;
 	bool rendering;
@@ -82,6 +103,8 @@ struct stroke_filter_data {
 	float cache_timer;
 	bool cache_valid;
 	uint32_t cache_w, cache_h;
+	// Set when a cached result's (animated) dashes must be drawn again.
+	bool redraw_stroke;
 
 	uint32_t width;
 	uint32_t height;
@@ -97,6 +120,15 @@ struct stroke_filter_data {
 	float contour_falloff_start;
 	float contour_falloff_end;
 	float contour_spacing_power;
+
+	// Dashes
+	enum stroke_dash_style dash_style;
+	float dash_length;
+	float dash_gap;
+	enum stroke_dash_cap dash_cap;
+	float dash_offset;
+	float dash_speed;
+	double dash_time;
 
 	uint32_t pad_t;
 	uint32_t pad_b;

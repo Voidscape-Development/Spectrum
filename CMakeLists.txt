@@ -180,4 +180,66 @@ target_sources(
     src/animate/animate-filter.c
 )
 
+# Animate: keyframes, triggers, more drivers, several targets
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/animate/animate-cursor.cpp
+    src/animate/animate-ui.h
+    src/animate/curve-editor.cpp
+    src/animate/curve-editor.hpp
+    src/animate/keyframes.c
+    src/animate/keyframes.h
+)
+
+# Shared infrastructure: hotkeys and React to Audio for every filter/source
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/common/audio-level.c
+    src/common/audio-level.h
+    src/common/audio-reactive.c
+    src/common/audio-reactive.h
+    src/common/source-hooks.c
+    src/common/source-hooks.h
+)
+
+# Spectrum Text
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/text/text-layout.cpp src/text/text-layout.hpp src/text/text-source.cpp)
+
+# Retro (oil paint, ASCII, palettes, VHS)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/retro.c)
+
+# Transitions
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/transitions/transition-common.c
+    src/transitions/transition-common.h
+    src/transitions/gradient-wipe.c
+    src/transitions/shape-wipe.c
+    src/transitions/luma-wipe.c
+    src/transitions/blur-dissolve.c
+    src/transitions/effect-transitions.c
+)
+
+# Composite and Edge filters
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/composite.c src/fx/edge.c)
+
+# Blur: lens (bokeh), depth and frosted glass algorithms
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/blur/algorithms/lens.c
+    src/blur/algorithms/lens.h
+    src/blur/algorithms/frosted.c
+    src/blur/algorithms/frosted.h
+)
+
+# Mesh gradients and Colors from Source
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/gradient/gradient-palette.c src/gradient/gradient-palette-dialog.cpp)
+
+# Warp and Time FX
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/warp.c src/fx/time-fx.c)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

@@ -19,6 +19,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <plugin-support.h>
 
+#include "common/source-hooks.h"
+
+/* Every Spectrum filter/source registered below goes through the source
+ * hooks (hotkeys, React to Audio); see common/source-hooks.h. */
+#undef obs_register_source
+#define obs_register_source(info) spectrum_register_source(info)
+
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 OBS_MODULE_AUTHOR("Voidscape Development")
@@ -53,6 +60,29 @@ extern struct obs_source_info spectrum_noise_source;
 
 /* Animation */
 extern struct obs_source_info spectrum_animate_filter;
+
+/* Text */
+extern struct obs_source_info spectrum_text_source;
+
+/* Retro */
+extern struct obs_source_info spectrum_retro_filter;
+
+/* Transitions */
+extern struct obs_source_info spectrum_gradient_wipe_transition;
+extern struct obs_source_info spectrum_shape_wipe_transition;
+extern struct obs_source_info spectrum_luma_wipe_transition;
+extern struct obs_source_info spectrum_blur_dissolve_transition;
+extern struct obs_source_info spectrum_glitch_transition;
+extern struct obs_source_info spectrum_pixelate_transition;
+extern struct obs_source_info spectrum_noise_dissolve_transition;
+
+/* Composite and Edge */
+extern struct obs_source_info spectrum_composite_filter;
+extern struct obs_source_info spectrum_edge_filter;
+
+/* Warp and Time FX */
+extern struct obs_source_info spectrum_warp_filter;
+extern struct obs_source_info spectrum_time_fx_filter;
 
 #include "common/fx-filter.h"
 
@@ -113,6 +143,24 @@ bool obs_module_load(void)
 
 	obs_register_source(&spectrum_animate_filter);
 
+	obs_register_source(&spectrum_text_source);
+
+	register_fx_filter(&spectrum_retro_filter);
+
+	obs_register_source(&spectrum_gradient_wipe_transition);
+	obs_register_source(&spectrum_shape_wipe_transition);
+	obs_register_source(&spectrum_luma_wipe_transition);
+	obs_register_source(&spectrum_blur_dissolve_transition);
+	obs_register_source(&spectrum_glitch_transition);
+	obs_register_source(&spectrum_pixelate_transition);
+	obs_register_source(&spectrum_noise_dissolve_transition);
+
+	register_fx_filter(&spectrum_composite_filter);
+	register_fx_filter(&spectrum_edge_filter);
+
+	register_fx_filter(&spectrum_warp_filter);
+	obs_register_source(&spectrum_time_fx_filter);
+
 	obs_log(LOG_INFO, "loaded version %s", PLUGIN_VERSION);
 	return true;
 }
@@ -146,5 +194,6 @@ void obs_module_post_load(void)
 
 void obs_module_unload(void)
 {
+	spectrum_hooks_shutdown();
 	obs_log(LOG_INFO, "plugin unloaded");
 }

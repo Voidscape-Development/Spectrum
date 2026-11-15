@@ -1,0 +1,81 @@
+// Spectrum Glitch: blocky displacement, torn rows and RGB split that peak at
+// the middle of the transition, while blocks of the incoming scene switch
+// in at random around the midpoint.
+#include "transition-common.effect"
+
+uniform float gt_amount = 60.0; // px, largest displacement
+uniform float gt_block = 40.0;  // px
+uniform float gt_split = 16.0;  // px
+uniform float gt_rate = 12.0;   // glitch changes per second
+uniform float gt_switch = 40.0; // %, spread of the block switch times
+uniform float gt_noise = 30.0;  // %
+uniform float gt_seed = 0.0;
+
+float4 scene(float2 uv, float use_b)
+{
+	return use_b > 0.5 ? tr_b(uv) : tr_a(uv);
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	float2 pix = uv * uv_size;
+	float tri = 1.0 - abs(2.0 * progress - 1.0);
+	float env = tri * tri * (3.0 - 2.0 * tri);
+	float fr = floor(time * max(gt_rate, 0.01)) + gt_seed * 13.17;
+	float block = max(gt_block, 2.0);
+
+	// Rows that tear sideways, in coarse bands that come and go.
+	float row = floor(pix.y / block);
+	float band = floor(pix.y / (block * 3.7));
+	float band_on = step(1.0 - 0.85 * env, hash12(float2(band, fr + 7.0)));
+	float shift = (hash12(float2(row, fr + 3.0)) - 0.5) * 2.0 * gt_amount * env * band_on;
+
+	// Blocks that jump.
+	float2 cell = floor(pix / (block * float2(2.0, 1.0)));
+	float2 jump = float2(0.0, 0.0);
+	if (hash12(cell + float2(fr * 1.37, fr * 0.71)) > 1.0 - 0.35 * env)
+		jump = (hash22(cell + float2(5.1 + fr, 2.3)) - 0.5) * 2.0 * gt_amount * env * float2(1.0, 0.35);
+
+	float2 duv = (float2(shift, 0.0) + jump) / uv_size;
+
+	// Each block switches to B at its own time around the midpoint, and
+	// may flicker to the other scene while the glitch is strong.
+	float spread = saturate(gt_switch / 100.0);
+	float ts = 0.5 + (hash12(cell * 0.73 + float2(11.0, gt_seed)) - 0.5) * spread;
+	float use_b = progress > ts ? 1.0 : 0.0;
+	if (hash12(cell + float2(fr * 2.11, 3.7)) < 0.12 * env)
+		use_b = 1.0 - use_b;
+	if (progress <= 0.0)
+		use_b = 0.0;
+	else if (progress >= 1.0)
+		use_b = 1.0;
+
+	// RGB split, its direction flipping from row to row.
+	float dir = hash12(float2(row, fr + 1.0)) > 0.5 ? 1.0 : -1.0;
+	float2 so = float2(gt_split * env * dir, 0.0) / uv_size;
+	float2 p = uv + duv;
+	float4 cr = scene(p + so, use_b);
+	float4 cg = scene(p, use_b);
+	float4 cb = scene(p - so, use_b);
+	float4 col = float4(cr.r, cg.g, cb.b, max(max(cr.a, cg.a), cb.a));
+
+	// Digital noise and bright scanlines.
+	float k = gt_noise / 100.0 * env;
+	if (k > 0.0) {
+		float line = floor(pix.y / 2.0);
+		float lit = step(1.0 - 0.08 * k, hash12(float2(line, fr + 9.0)));
+		float n = hash12(floor(pix) + float2(fr * 17.0, fr * 3.0)) - 0.5;
+		col.rgb = max(col.rgb + (n * 0.25 * k + lit * 0.35) * col.a, float3(0.0, 0.0, 0.0));
+	}
+	return tr_output(col, uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDraw(v_in);
+	}
+}
