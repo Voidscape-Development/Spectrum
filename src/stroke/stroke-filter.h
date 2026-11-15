@@ -23,4 +23,5 @@ static void load_effects(stroke_filter_data_t *filter);
 static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *settings);
 static bool setting_stroke_position_modified(void *data, obs_properties_t *props, obs_property_t *p,
 					     obs_data_t *settings);
+static bool setting_dash_style_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *settings);
 static bool setting_stroke_padding_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *settings);

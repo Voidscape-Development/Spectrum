@@ -15,6 +15,7 @@ Blur a source using one of several algorithms, then limit it with an effect mask
 
 ### Spectrum Stroke, Spectrum Glow and Spectrum Shadow (filters and sources)
 - **Stroke:** an inner or outer outline, or repeating contours, filled with a color, image or source.
+  Strokes and contours can be **dashed** or **dotted** (square or round dash ends, offset, and an animated "marching ants" speed). Dashes follow every outline of text and logos: each outline is traced and measured along its length, and the dashes are evened out so closed outlines have no seam.
 - **Glow:** an inner or outer glow with adjustable size, intensity, blur type and fill.
 - **Shadow:** an inner or outer shadow with a light angle, distance, size and fill.
 
@@ -70,7 +71,7 @@ Drives any numeric setting of any filter on a source, or of the source itself, f
 - **Presets:** every Spectrum filter and source can save, load and delete named presets.
 - **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, shape rotation and shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, and the light ray, flare and point light positions. Changes show live, and Cancel restores the previous values.
 - **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort and Stylize filters interpolate between two filter states.
-- **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame.
+- **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame (marching dashes keep moving on a cached stroke).
 
 ## Building
 

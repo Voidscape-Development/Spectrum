@@ -318,6 +318,366 @@ technique DrawJumpFloodStep
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Dashes and dots
+//
+// Dashes need a position along the contour. A polar angle around the shape's
+// centre only works for a single convex blob (text has many outlines, and
+// concave ones would get bunched or stretched dashes), so instead every
+// contour is traced and measured on the GPU:
+//
+// 1. Marching squares over the alpha field (at the same level the jump flood
+//    seeds use) gives every cell the contour crosses its segment, the point
+//    in its middle, and the cell the contour continues into. Cells are the
+//    squares between four pixel centres; the arc textures have one more
+//    column and row than the source so outlines touching the border close
+//    around it.
+// 2. Following those successor links is a list per outline. Pointer jumping
+//    (log2 passes) finds the smallest cell of every closed outline, which
+//    becomes its start (open chains start at their end).
+// 3. Pointer jumping again sums the segment lengths to the start: the arc
+//    length of every contour point, and the outline's total length.
+// 4. When drawing, a pixel's nearest edge point (from the jump flood) looks
+//    up the arc length of the cell it lies in. Dash periods are stretched so
+//    each closed outline holds a whole number of them: no seam.
+//
+// Wide strokes take the arc length at their nearest contour point, so dashes
+// are cut along the stroke's normals (and fan out around corners), and where
+// two outlines' strokes meet the pattern follows whichever is nearer.
+// ---------------------------------------------------------------------------
+
+uniform texture2d arc_state;
+uniform texture2d arc_field;
+uniform float2 arc_size = {1.0, 1.0};
+uniform float dash_enabled = 0.0;
+uniform float dash_period = 30.0; // px, dash plus gap
+uniform float dash_length = 20.0; // px, including caps
+uniform float dash_round = 0.0;   // 1 for round caps
+uniform float dash_phase = 0.0;   // in periods
+
+struct ArcCell {
+	float2 succ;
+	float2 pt;
+	float2 dir;
+	float valid;
+};
+
+float arc_pixel_alpha(float2 pix)
+{
+	if (pix.x < 0.0 || pix.y < 0.0 || pix.x >= uv_size.x || pix.y >= uv_size.y)
+		return 0.0;
+	return image.SampleLevel(sdfSampler, (pix + 0.5) / uv_size, 0.0).a;
+}
+
+float2 arc_crossing(float2 p0, float2 p1, float a0, float a1, float level)
+{
+	return lerp(p0, p1, saturate((level - a0) / (a1 - a0)));
+}
+
+// Marching squares cell `cell` (texel of the arc textures, centred on the
+// corner shared by pixels cell - 1 and cell). The contour is followed with
+// the inside on its right.
+ArcCell arc_cell(float2 cell)
+{
+	ArcCell r;
+	r.succ = float2(-1.0, -1.0);
+	r.pt = cell;
+	r.dir = float2(0.0, 0.0);
+	r.valid = 0.0;
+
+	float level = seed_level();
+	float a_tl = arc_pixel_alpha(cell + float2(-1.0, -1.0));
+	float a_tr = arc_pixel_alpha(cell + float2(0.0, -1.0));
+	float a_br = arc_pixel_alpha(cell);
+	float a_bl = arc_pixel_alpha(cell + float2(-1.0, 0.0));
+	float i_tl = step(level, a_tl);
+	float i_tr = step(level, a_tr);
+	float i_br = step(level, a_br);
+	float i_bl = step(level, a_bl);
+
+	// Clockwise edges: top (tl->tr), right (tr->br), bottom (br->bl), left
+	// (bl->tl). The contour leaves through an edge going outside -> inside.
+	float4 leave = float4((1.0 - i_tl) * i_tr, (1.0 - i_tr) * i_br, (1.0 - i_br) * i_bl, (1.0 - i_bl) * i_tl);
+	float4 enter = float4(i_tl * (1.0 - i_tr), i_tr * (1.0 - i_br), i_br * (1.0 - i_bl), i_bl * (1.0 - i_tl));
+	if (dot(leave, float4(1.0, 1.0, 1.0, 1.0)) < 0.5)
+		return r;
+
+	float2 tl = cell + float2(-0.5, -0.5);
+	float2 tr = cell + float2(0.5, -0.5);
+	float2 br = cell + float2(0.5, 0.5);
+	float2 bl = cell + float2(-0.5, 0.5);
+	float2 p_top = arc_crossing(tl, tr, a_tl, a_tr, level);
+	float2 p_right = arc_crossing(tr, br, a_tr, a_br, level);
+	float2 p_bottom = arc_crossing(br, bl, a_br, a_bl, level);
+	float2 p_left = arc_crossing(bl, tl, a_bl, a_tl, level);
+
+	// Saddle cells have two segments: pair the exit with the entry just
+	// before it (inside corners connected through the middle).
+	float2 step_dir;
+	float2 p_out;
+	float prev_in;
+	float2 p_prev;
+	if (leave.x > 0.5) {
+		step_dir = float2(0.0, -1.0);
+		p_out = p_top;
+		prev_in = enter.w;
+		p_prev = p_left;
+	} else if (leave.y > 0.5) {
+		step_dir = float2(1.0, 0.0);
+		p_out = p_right;
+		prev_in = enter.x;
+		p_prev = p_top;
+	} else if (leave.z > 0.5) {
+		step_dir = float2(0.0, 1.0);
+		p_out = p_bottom;
+		prev_in = enter.y;
+		p_prev = p_right;
+	} else {
+		step_dir = float2(-1.0, 0.0);
+		p_out = p_left;
+		prev_in = enter.z;
+		p_prev = p_bottom;
+	}
+	float2 p_in;
+	if (prev_in > 0.5)
+		p_in = p_prev;
+	else if (enter.x > 0.5)
+		p_in = p_top;
+	else if (enter.y > 0.5)
+		p_in = p_right;
+	else if (enter.z > 0.5)
+		p_in = p_bottom;
+	else
+		p_in = p_left;
+
+	float2 succ = cell + step_dir;
+	if (succ.x < 0.0 || succ.y < 0.0 || succ.x >= arc_size.x || succ.y >= arc_size.y)
+		succ = cell;
+	float2 seg = p_out - p_in;
+	float seg_len = length(seg);
+	r.succ = succ;
+	r.pt = 0.5 * (p_in + p_out);
+	r.dir = seg_len > 0.0001 ? seg / seg_len : step_dir;
+	r.valid = 1.0;
+	return r;
+}
+
+float4 arc_state_at(float2 cell)
+{
+	return arc_state.SampleLevel(sdfSampler, (cell + 0.5) / arc_size, 0.0);
+}
+
+bool same_cell(float2 a, float2 b)
+{
+	return a.x == b.x && a.y == b.y;
+}
+
+// (y, x) order, so the comparison is exact for any texture size.
+float2 cell_min(float2 a, float2 b)
+{
+	return (a.y < b.y || (a.y == b.y && a.x < b.x)) ? a : b;
+}
+
+// Pass 1: (successor, smallest cell seen). Cells without contour get -1.
+// The end of an open chain is its own successor and carries (-1, -1), so
+// the whole chain picks it as its start.
+float4 PSArcInit(VertData v_in) : TARGET
+{
+	float2 cell = floor(v_in.uv * arc_size);
+	ArcCell c = arc_cell(cell);
+	if (c.valid < 0.5)
+		return float4(-1.0, -1.0, -1.0, -1.0);
+	float2 id = same_cell(c.succ, cell) ? float2(-1.0, -1.0) : cell;
+	return float4(c.succ, id);
+}
+
+// Pointer jumping: look twice as far ahead for a smaller cell.
+float4 PSArcMin(VertData v_in) : TARGET
+{
+	float2 cell = floor(v_in.uv * arc_size);
+	float4 s = arc_state_at(cell);
+	if (s.x < 0.0)
+		return s;
+	float4 n = arc_state_at(s.xy);
+	return float4(n.xy, cell_min(s.zw, n.zw));
+}
+
+// Pass 3: (next, distance to it). Starts (the smallest cell of an outline,
+// or the end of a chain) point at themselves.
+float4 PSRankInit(VertData v_in) : TARGET
+{
+	float2 cell = floor(v_in.uv * arc_size);
+	float4 s = arc_state_at(cell);
+	if (s.x < 0.0)
+		return float4(-1.0, -1.0, 0.0, 0.0);
+	ArcCell c = arc_cell(cell);
+	if (same_cell(s.zw, cell) || same_cell(c.succ, cell))
+		return float4(cell, 0.0, 1.0);
+	ArcCell n = arc_cell(c.succ);
+	return float4(c.succ, length(n.pt - c.pt), 1.0);
+}
+
+// Pointer jumping: sum the distances to the start.
+float4 PSRankStep(VertData v_in) : TARGET
+{
+	float2 cell = floor(v_in.uv * arc_size);
+	float4 s = arc_state_at(cell);
+	if (s.x < 0.0)
+		return s;
+	float4 n = arc_state_at(s.xy);
+	return float4(n.xy, s.z + n.z, 1.0);
+}
+
+// Final: (arc length extrapolated to the cell centre, outline length (0 for
+// open chains), segment direction). The arc length decreases along the
+// direction.
+float4 PSArcFinal(VertData v_in) : TARGET
+{
+	float2 cell = floor(v_in.uv * arc_size);
+	float4 s = arc_state_at(cell);
+	if (s.x < 0.0)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	ArcCell c = arc_cell(cell);
+	// After the jumps every cell points at its outline's start.
+	float2 root = s.xy;
+	ArcCell rc = arc_cell(root);
+	float total = 0.0;
+	if (!same_cell(rc.succ, root)) {
+		float4 n = arc_state_at(rc.succ);
+		// Only a closed outline gets back to the same start.
+		if (same_cell(n.xy, root))
+			total = n.z + length(arc_cell(rc.succ).pt - rc.pt);
+	}
+	float arc = s.z - dot(cell - c.pt, c.dir);
+	return float4(arc, total, c.dir);
+}
+
+technique DrawArcInit
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSArcInit(v_in);
+	}
+}
+
+technique DrawArcMin
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSArcMin(v_in);
+	}
+}
+
+technique DrawRankInit
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSRankInit(v_in);
+	}
+}
+
+technique DrawRankStep
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSRankStep(v_in);
+	}
+}
+
+technique DrawArcFinal
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSArcFinal(v_in);
+	}
+}
+
+// Arc length (x) and outline length (y) at edge point p, from the arc field
+// of the cell it lies in (or the nearest contour cell around it). x is
+// -1e9 when there is none.
+float2 contour_arc(float2 p)
+{
+	float2 base = floor(p + 0.5);
+	float best = 1.0e9;
+	float4 info = float4(0.0, 0.0, 0.0, 0.0);
+	float2 best_cell = base;
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			float2 cell = base + float2(float(x), float(y));
+			float4 f = arc_field.SampleLevel(sdfSampler, (cell + 0.5) / arc_size, 0.0);
+			float2 d = cell - p;
+			float d2 = dot(d, d) + (dot(f.zw, f.zw) > 0.5 ? 0.0 : 1.0e8);
+			if (d2 < best) {
+				best = d2;
+				info = f;
+				best_cell = cell;
+			}
+		}
+	}
+	if (best > 1.0e7)
+		return float2(-1.0e9, 0.0);
+	return float2(info.x - dot(p - best_cell, info.zw), info.y);
+}
+
+// Coverage of the dash pattern for a pixel whose nearest edge point is p,
+// `n` px across from the middle of a band `h` px half wide.
+float dash_coverage(float2 p, float n, float h)
+{
+	if (dash_enabled < 0.5)
+		return 1.0;
+	float2 arc = contour_arc(p);
+	if (arc.x < -1.0e8)
+		return 1.0;
+	float period = max(dash_period, 1.0);
+	// A whole number of periods around closed outlines.
+	float count = arc.y > 0.0 ? max(floor(arc.y / period + 0.5), 1.0) : 0.0;
+	float pp = count > 0.0 ? arc.y / count : period;
+	float len = dash_length * pp / period;
+	float y = frac(arc.x / pp + dash_phase) * pp;
+	float dx = abs(y - 0.5 * len);
+	dx = min(dx, pp - dx);
+	if (dash_round > 0.5) {
+		float e = dx - max(0.5 * len - h, 0.0);
+		return e > 0.0 ? edge_cov(h - length(float2(e, n)), 1.0) : 1.0;
+	}
+	return edge_cov(0.5 * len - dx, 1.0);
+}
+
+// Dash coverage of outer and inner stroke bands (signed distance sd).
+float outer_dash(float4 field, float sd)
+{
+	float start = max(stroke_offset, 0.0);
+	float h = 0.5 * (stroke_extent - start);
+	return dash_coverage(field.xy, sd - start - h, h);
+}
+
+float inner_dash(float4 field, float sd)
+{
+	float start = max(stroke_offset, 0.0);
+	float h = 0.5 * (stroke_extent - start);
+	return dash_coverage(field.xy, -sd - start - h, h);
+}
+
+// Dash coverage within repeating contour bands at distance d (the band's
+// own middle and half width, in the same warped units as contour_bands).
+float contour_dash_coverage(float2 p, float d)
+{
+	if (dash_enabled < 0.5)
+		return 1.0;
+	float pw = max(contour_spacing_power, 0.01);
+	float period = max(stroke_extent + contour_spacing, 0.0001);
+	float m = fmod(pow(max(d, 0.0001), pw) + contour_offset, period);
+	// The leading edge of the next band belongs to that band.
+	if (m > 0.5 * (period + stroke_extent))
+		m -= period;
+	return dash_coverage(p, m - 0.5 * stroke_extent, 0.5 * stroke_extent);
+}
+
 // The fill of a stroke at `depth` px from the edge (outwards for outer
 // strokes, inwards for inner ones): the gradient across the stroke width when
 // fill_gradient is set, `fill` otherwise.
