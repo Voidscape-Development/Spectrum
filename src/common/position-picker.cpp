@@ -1,5 +1,9 @@
 #include "position-picker.hpp"
 
+extern "C" {
+#include "../gradient/gradient.h"
+}
+
 #include <obs-frontend-api.h>
 #include <graphics/vec4.h>
 
@@ -14,7 +18,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <map>
+#include <string>
 
 namespace spectrum_picker {
 
@@ -37,10 +43,72 @@ QString T(const char *id)
 #define ANGLE_IF(label, key, anchor, y_up, ck, ...) \
 	{HandleType::Angle, label, nullptr, nullptr, key, nullptr, anchor, y_up, 0.0, ck, {__VA_ARGS__}}
 
+// Appends handles for the mesh and free color points of the gradients of
+// these types (prefix, and the fill type condition of the gradient). Which
+// of them show is decided by gradient_picker_handle().
+std::map<std::string, std::vector<HandleSpec>> with_gradient_points(std::map<std::string, std::vector<HandleSpec>> t)
+{
+	struct GradientUse {
+		const char *id;
+		const char *prefix;
+		const char *cond_key;
+		int cond_value;
+	};
+	static const GradientUse uses[] = {
+		{"spectrum_gradient_source", "gradient_", nullptr, 0},
+		{"spectrum_shape_source", "sh_gradient_", "sh_fill_type", 2},
+		{"spectrum_stroke_filter", "stroke_gradient_", "stroke_fill_type", 4},
+		{"spectrum_glow_filter", "glow_gradient_", "glow_fill_type", 4},
+		{"spectrum_shadow_filter", "glow_gradient_", "glow_fill_type", 4},
+	};
+	// Stable storage for the generated keys.
+	static std::deque<std::string> keys;
+	auto key = [](const std::string &s) {
+		return keys.emplace_back(s).c_str();
+	};
+
+	for (const GradientUse &use : uses) {
+		std::vector<HandleSpec> &list = t[use.id];
+		const std::string p = use.prefix;
+		for (int r = 0; r < GRADIENT_MESH_MAX; r++) {
+			for (int c = 0; c < GRADIENT_MESH_MAX; c++) {
+				const std::string base =
+					p + "mesh_" + std::to_string(r) + "_" + std::to_string(c) + "_";
+				list.push_back({HandleType::PointPercent,
+						"Picker.MeshPoint",
+						key(base + "x"),
+						key(base + "y"),
+						nullptr,
+						nullptr,
+						-1,
+						false,
+						0.0,
+						use.cond_key,
+						{use.cond_value}});
+			}
+		}
+		for (int i = 0; i < GRADIENT_POINTS_MAX; i++) {
+			const std::string base = p + "point_" + std::to_string(i) + "_";
+			list.push_back({HandleType::PointPercent,
+					"Picker.ColorPoint",
+					key(base + "x"),
+					key(base + "y"),
+					nullptr,
+					nullptr,
+					-1,
+					false,
+					0.0,
+					use.cond_key,
+					{use.cond_value}});
+		}
+	}
+	return t;
+}
+
 // Handles per filter/source type (unversioned id).
 const std::map<std::string, std::vector<HandleSpec>> &specs()
 {
-	static const std::map<std::string, std::vector<HandleSpec>> table = {
+	static const std::map<std::string, std::vector<HandleSpec>> table = with_gradient_points({
 		{"spectrum_gradient_source",
 		 {PT("Picker.GradientCenter", "gradient_center_x", "gradient_center_y"),
 		  ANGLE("Picker.GradientAngle", "gradient_angle", 0, false)}},
@@ -127,12 +195,21 @@ const std::map<std::string, std::vector<HandleSpec>> &specs()
 		{"spectrum_edge_filter",
 		 {ANGLE_IF("Picker.LightAngle", "ed_angle", -1, true, "ed_mode", 4),
 		  ANGLE_IF("Picker.HatchAngle", "ed_hatch_angle", -1, false, "ed_mode", 3)}},
-	};
+	});
 	return table;
 }
 
 bool condition_met(obs_data_t *settings, const HandleSpec &spec)
 {
+	// Gradient positions also depend on the gradient's shape (and the
+	// mesh size or point count).
+	bool gradient_visible = true;
+	char suffix[16];
+	if (gradient_picker_handle(settings, spec.key_x ? spec.key_x : spec.key_angle, &gradient_visible, suffix,
+				   sizeof(suffix)) &&
+	    !gradient_visible)
+		return false;
+
 	if (!spec.cond_key)
 		return true;
 	if (spec.cond_values[0] == 0)
@@ -409,6 +486,7 @@ void PickerCanvas::paintEvent(QPaintEvent *)
 	}
 
 	p.setRenderHint(QPainter::Antialiasing);
+	obs_data_t *settings = obs_source_get_settings(_target);
 	for (int i = 0; i < (int)_handles.size(); i++) {
 		const Handle &h = _handles[i];
 		if (!h.visible)
@@ -448,7 +526,12 @@ void PickerCanvas::paintEvent(QPaintEvent *)
 			p.drawLine(pos - QPointF(0, kHandleRadius + 4), pos + QPointF(0, kHandleRadius + 4));
 		}
 
-		const QString label = T(h.spec->label);
+		QString label = T(h.spec->label);
+		// Number the mesh and free color points.
+		bool unused;
+		char suffix[16];
+		if (gradient_picker_handle(settings, h.spec->key_x, &unused, suffix, sizeof(suffix)) && suffix[0])
+			label += " " + QString::fromUtf8(suffix);
 		// Keep the label inside the widget.
 		const QFontMetricsF fm(font());
 		QPointF text_pos = pos + QPointF(kHandleRadius + 6, -kHandleRadius - 4);
@@ -463,6 +546,7 @@ void PickerCanvas::paintEvent(QPaintEvent *)
 		p.setBrush(Qt::white);
 		p.drawPath(text);
 	}
+	obs_data_release(settings);
 }
 
 void PickerCanvas::mousePressEvent(QMouseEvent *event)
