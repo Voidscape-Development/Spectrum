@@ -35,8 +35,9 @@ enum class HandleType {
 	PointOffset,  // key_x / key_y: px from the centre
 	Angle,        // key_angle: degrees around an anchor
 	Polar,        // key_angle + key_distance (px) from the centre
-	PointPixel,   // key_x / key_y: px offset from a rest point at
-	// (rest_x, rest_y) x the source size
+	// key_x / key_y: px offset from a rest point at (rest_x, rest_y) x the
+	// source size.
+	PointPixel,
 };
 
 struct HandleSpec {

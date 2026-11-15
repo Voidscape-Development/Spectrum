@@ -205,10 +205,7 @@ target_sources(
 )
 
 # Spectrum Text
-target_sources(
-  ${CMAKE_PROJECT_NAME}
-  PRIVATE src/text/text-layout.cpp src/text/text-layout.hpp src/text/text-source.cpp
-)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/text/text-layout.cpp src/text/text-layout.hpp src/text/text-source.cpp)
 
 # Retro (oil paint, ASCII, palettes, VHS)
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/retro.c)
@@ -240,19 +237,9 @@ target_sources(
 )
 
 # Mesh gradients and Colors from Source
-target_sources(
-  ${CMAKE_PROJECT_NAME}
-  PRIVATE
-    src/gradient/gradient-palette.c
-    src/gradient/gradient-palette-dialog.cpp
-)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/gradient/gradient-palette.c src/gradient/gradient-palette-dialog.cpp)
 
 # Warp and Time FX
-target_sources(
-  ${CMAKE_PROJECT_NAME}
-  PRIVATE
-    src/fx/warp.c
-    src/fx/time-fx.c
-)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/warp.c src/fx/time-fx.c)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
