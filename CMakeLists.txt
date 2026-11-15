@@ -180,4 +180,16 @@ target_sources(
     src/animate/animate-filter.c
 )
 
+# Shared infrastructure: hotkeys and React to Audio for every filter/source
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/common/audio-level.c
+    src/common/audio-level.h
+    src/common/audio-reactive.c
+    src/common/audio-reactive.h
+    src/common/source-hooks.c
+    src/common/source-hooks.h
+)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
