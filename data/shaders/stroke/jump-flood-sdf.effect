@@ -42,9 +42,11 @@ float4 outer_stroke(VertData v_in, float4 fill)
 {
 	float2 coord = v_in.uv * uv_size;
 	float4 c = source_color(v_in.uv);
-	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	float4 field = distance_field.Sample(sdfSampler, v_in.uv);
+	float sd = signed_distance(coord, field, c.a);
 	fill = stroke_fill_at(fill, sd);
-	float4 stroke = float4(fill.rgb, fill.a * outer_stroke_band(sd));
+	float band = min(outer_stroke_band(sd), outer_dash(field, sd));
+	float4 stroke = float4(fill.rgb, fill.a * band);
 	return blend_over(c, stroke);
 }
 
@@ -52,9 +54,11 @@ float4 inner_stroke(VertData v_in, float4 fill)
 {
 	float2 coord = v_in.uv * uv_size;
 	float4 c = source_color(v_in.uv);
-	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	float4 field = distance_field.Sample(sdfSampler, v_in.uv);
+	float sd = signed_distance(coord, field, c.a);
 	fill = stroke_fill_at(fill, -sd);
-	float4 stroke = float4(fill.rgb, fill.a * inner_stroke_band(-sd) * inner_clip(sd, c.a));
+	float band = min(inner_stroke_band(-sd), inner_dash(field, sd));
+	float4 stroke = float4(fill.rgb, fill.a * band * inner_clip(sd, c.a));
 	return blend_over(stroke, c);
 }
 
@@ -62,11 +66,13 @@ float4 outer_contour(VertData v_in, float4 fill)
 {
 	float2 coord = v_in.uv * uv_size;
 	float4 c = source_color(v_in.uv);
-	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	float4 field = distance_field.Sample(sdfSampler, v_in.uv);
+	float sd = signed_distance(coord, field, c.a);
 	float d = max(sd, 0.0);
 	fill = contour_fill_at(fill, d);
 	// Let the first band run slightly under the source, like the stroke.
-	float coverage = contour_bands(d) * contour_falloff(d) * edge_cov(sd + 1.0, 1.0);
+	float bands = min(contour_bands(d), contour_dash_coverage(field.xy, d));
+	float coverage = bands * contour_falloff(d) * edge_cov(sd + 1.0, 1.0);
 	float4 stroke = float4(fill.rgb, fill.a * coverage);
 	return blend_over(c, stroke);
 }
@@ -75,10 +81,12 @@ float4 inner_contour(VertData v_in, float4 fill)
 {
 	float2 coord = v_in.uv * uv_size;
 	float4 c = source_color(v_in.uv);
-	float sd = signed_distance(coord, distance_field.Sample(sdfSampler, v_in.uv), c.a);
+	float4 field = distance_field.Sample(sdfSampler, v_in.uv);
+	float sd = signed_distance(coord, field, c.a);
 	float d = max(-sd, 0.0);
 	fill = contour_fill_at(fill, d);
-	float coverage = contour_bands(d) * contour_falloff(d) * inner_clip(sd, c.a);
+	float bands = min(contour_bands(d), contour_dash_coverage(field.xy, d));
+	float coverage = bands * contour_falloff(d) * inner_clip(sd, c.a);
 	float4 stroke = float4(fill.rgb, fill.a * coverage);
 	return blend_over(stroke, c);
 }

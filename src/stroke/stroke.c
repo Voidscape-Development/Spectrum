@@ -1,4 +1,5 @@
 #include "stroke.h"
+#include <math.h>
 #include <string.h>
 
 void load_jump_flood_sdf_effect(stroke_filter_data_t *filter)
@@ -387,6 +388,116 @@ void render_jf_passes(stroke_filter_data_t *data, float max_extent)
 	data->distance_field = data->buffer_a;
 }
 
+// One pass of the arc length pipeline: reads arc_a (and the input's alpha),
+// writes arc_b, then swaps them.
+static void render_arc_pass(stroke_filter_data_t *data, gs_texture_t *input, const char *technique, uint32_t aw,
+			    uint32_t ah)
+{
+	gs_effect_t *effect = data->effect_jump_flood_sdf;
+	gs_texture_t *state = data->arc_a ? gs_texrender_get_texture(data->arc_a) : NULL;
+	data->arc_b = create_or_reset_texrender_format(data->arc_b, GS_RGBA32F);
+
+	gs_effect_set_texture(gs_effect_get_param_by_name(effect, "image"), input);
+	gs_eparam_t *param = gs_effect_get_param_by_name(effect, "arc_state");
+	if (param && state)
+		gs_effect_set_texture(param, state);
+	param = gs_effect_get_param_by_name(effect, "arc_size");
+	if (param) {
+		struct vec2 size;
+		vec2_set(&size, (float)aw, (float)ah);
+		gs_effect_set_vec2(param, &size);
+	}
+	if (data->param_jump_flood_threshold)
+		gs_effect_set_float(data->param_jump_flood_threshold, data->jump_flood_threshold);
+	set_uv_size(data);
+
+	if (gs_texrender_begin(data->arc_b, aw, ah)) {
+		gs_ortho(0.0f, (float)aw, 0.0f, (float)ah, -100.0f, 100.0f);
+		while (gs_effect_loop(effect, technique))
+			gs_draw_sprite(NULL, 0, aw, ah);
+		gs_texrender_end(data->arc_b);
+	}
+
+	gs_texrender_t *tmp = data->arc_a;
+	data->arc_a = data->arc_b;
+	data->arc_b = tmp;
+}
+
+// Measures the arc length along every outline of the input, for dashes (see
+// jump-flood-common.effect). Leaves data->arc_field pointing at the result,
+// or NULL for solid strokes.
+void render_jf_arc(stroke_filter_data_t *data)
+{
+	gs_effect_t *effect = data->effect_jump_flood_sdf;
+	gs_texture_t *input = data->input_texrender ? gs_texrender_get_texture(data->input_texrender) : NULL;
+	data->arc_field = NULL;
+	if (!effect || !input || data->dash_style == STROKE_DASH_SOLID) {
+		return;
+	}
+
+	const uint32_t aw = data->width + 1;
+	const uint32_t ah = data->height + 1;
+	// Enough pointer jumps for outlines up to four times the perimeter of
+	// the source; longer ones (rare) just get a few extra starts.
+	int steps = 1;
+	while (steps < 30 && (1ull << steps) < 4ull * (aw + ah)) {
+		steps++;
+	}
+
+	stroke_set_blending_parameters();
+	render_arc_pass(data, input, "DrawArcInit", aw, ah);
+	for (int i = 0; i < steps; i++) {
+		render_arc_pass(data, input, "DrawArcMin", aw, ah);
+	}
+	render_arc_pass(data, input, "DrawRankInit", aw, ah);
+	for (int i = 0; i < steps; i++) {
+		render_arc_pass(data, input, "DrawRankStep", aw, ah);
+	}
+	render_arc_pass(data, input, "DrawArcFinal", aw, ah);
+	gs_blend_state_pop();
+
+	data->arc_field = data->arc_a;
+}
+
+// Dash uniforms for the stroke passes.
+static void set_dash_params(stroke_filter_data_t *data)
+{
+	gs_effect_t *effect = data->effect_jump_flood_sdf;
+	gs_texture_t *field = data->arc_field ? gs_texrender_get_texture(data->arc_field) : NULL;
+	const bool enabled = data->dash_style != STROKE_DASH_SOLID && field;
+
+	gs_eparam_t *param = gs_effect_get_param_by_name(effect, "dash_enabled");
+	if (param)
+		gs_effect_set_float(param, enabled ? 1.0f : 0.0f);
+	if (!enabled)
+		return;
+
+	float length, period;
+	bool round;
+	if (data->dash_style == STROKE_DASH_DOTTED) {
+		// Dots as wide as the stroke, `gap` apart.
+		length = fmaxf(data->stroke_size, 1.0f);
+		period = length + fmaxf(data->dash_gap, 0.0f);
+		round = true;
+	} else {
+		length = fmaxf(data->dash_length, 1.0f);
+		period = length + fmaxf(data->dash_gap, 0.0f);
+		round = data->dash_cap == STROKE_DASH_CAP_ROUND;
+	}
+	// Offset and marching ants, as a fraction of a period.
+	const double shift = ((double)data->dash_offset + (double)data->dash_speed * data->dash_time) / (double)period;
+	const float phase = (float)(shift - floor(shift));
+
+	gs_effect_set_texture(gs_effect_get_param_by_name(effect, "arc_field"), field);
+	struct vec2 size;
+	vec2_set(&size, (float)(data->width + 1), (float)(data->height + 1));
+	gs_effect_set_vec2(gs_effect_get_param_by_name(effect, "arc_size"), &size);
+	gs_effect_set_float(gs_effect_get_param_by_name(effect, "dash_period"), period);
+	gs_effect_set_float(gs_effect_get_param_by_name(effect, "dash_length"), length);
+	gs_effect_set_float(gs_effect_get_param_by_name(effect, "dash_round"), round ? 1.0f : 0.0f);
+	gs_effect_set_float(gs_effect_get_param_by_name(effect, "dash_phase"), phase);
+}
+
 void render_jf_distance(stroke_filter_data_t *data)
 {
 	gs_effect_t *effect = data->effect_jump_flood_sdf;
@@ -498,6 +609,8 @@ void render_jf_distance(stroke_filter_data_t *data)
 		gs_effect_set_float(param_fill_gradient, gradient_across ? 1.0f : 0.0f);
 
 	bool fill_color = (data->fill_type == STROKE_FILL_TYPE_COLOR) || !source_available;
+
+	set_dash_params(data);
 
 	if (data->param_stroke_uv_size) {
 		struct vec2 uv_size;

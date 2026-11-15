@@ -6,6 +6,15 @@
 
 #define NZ_PREFIX "nz_gradient_"
 
+// Pattern types (nz_type), after the noise types 1-5.
+enum {
+	NZ_STARFIELD = 6,
+	NZ_PARTICLES = 7,
+	NZ_CAUSTICS = 8,
+	NZ_TRUCHET = 9,
+	NZ_HEX = 10,
+};
+
 static const struct fx_filter_def noise_def = {
 	.effect_file = "shaders/fx/noise.effect",
 	.gradient_prefix = NZ_PREFIX,
@@ -40,6 +49,10 @@ static void noise_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "nz_brightness", 0.0);
 	obs_data_set_default_double(settings, "nz_aspect", 100.0);
 	obs_data_set_default_double(settings, "nz_opacity", 100.0);
+	obs_data_set_default_double(settings, "nz_density", 50.0);
+	obs_data_set_default_double(settings, "nz_size", 50.0);
+	obs_data_set_default_double(settings, "nz_twinkle", 50.0);
+	obs_data_set_default_int(settings, "nz_hex_style", 3);
 	gradient_defaults(settings, NZ_PREFIX);
 }
 
@@ -50,6 +63,32 @@ static obs_property_t *slider(obs_properties_t *props, const char *key, const ch
 	if (suffix)
 		obs_property_float_set_suffix(p, suffix);
 	return p;
+}
+
+static void set_visible(obs_properties_t *props, const char *key, bool visible)
+{
+	obs_property_t *p = obs_properties_get(props, key);
+	if (p)
+		obs_property_set_visible(p, visible);
+}
+
+// Show the settings the chosen noise type or pattern uses.
+static bool noise_type_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *settings)
+{
+	UNUSED_PARAMETER(p);
+	const long long type = obs_data_get_int(settings, "nz_type");
+	const bool noise = type < NZ_STARFIELD;
+	const bool sprites = type == NZ_STARFIELD || type == NZ_PARTICLES;
+	set_visible(props, "nz_fractal", noise);
+	set_visible(props, "nz_octaves", noise || sprites);
+	set_visible(props, "nz_lacunarity", noise || sprites);
+	set_visible(props, "nz_gain", noise || sprites);
+	set_visible(props, "nz_warp", !sprites);
+	set_visible(props, "nz_density", sprites);
+	set_visible(props, "nz_size", !noise);
+	set_visible(props, "nz_twinkle", sprites || type == NZ_HEX);
+	set_visible(props, "nz_hex_style", type == NZ_HEX);
+	return true;
 }
 
 static obs_properties_t *noise_properties(void *data)
@@ -67,6 +106,12 @@ static obs_properties_t *noise_properties(void *data)
 	obs_property_list_add_int(p, obs_module_text("Noise.Type.Simplex"), 3);
 	obs_property_list_add_int(p, obs_module_text("Noise.Type.Cells"), 4);
 	obs_property_list_add_int(p, obs_module_text("Noise.Type.CellEdges"), 5);
+	obs_property_list_add_int(p, obs_module_text("Noise.Type.Starfield"), NZ_STARFIELD);
+	obs_property_list_add_int(p, obs_module_text("Noise.Type.Particles"), NZ_PARTICLES);
+	obs_property_list_add_int(p, obs_module_text("Noise.Type.Caustics"), NZ_CAUSTICS);
+	obs_property_list_add_int(p, obs_module_text("Noise.Type.Truchet"), NZ_TRUCHET);
+	obs_property_list_add_int(p, obs_module_text("Noise.Type.Hex"), NZ_HEX);
+	obs_property_set_modified_callback(p, noise_type_modified);
 
 	p = obs_properties_add_list(props, "nz_fractal", obs_module_text("Noise.Fractal"), OBS_COMBO_TYPE_LIST,
 				    OBS_COMBO_FORMAT_INT);
@@ -80,6 +125,14 @@ static obs_properties_t *noise_properties(void *data)
 	slider(props, "nz_lacunarity", "Noise.Lacunarity", 1.1, 4.0, 0.01, NULL);
 	slider(props, "nz_gain", "Noise.Gain", 0.0, 100.0, 0.1, "%");
 	slider(props, "nz_warp", "Noise.Warp", 0.0, 100.0, 0.1, "%");
+	slider(props, "nz_density", "Noise.Density", 0.0, 100.0, 0.1, "%");
+	slider(props, "nz_size", "Noise.Size", 0.0, 100.0, 0.1, "%");
+	slider(props, "nz_twinkle", "Noise.Twinkle", 0.0, 100.0, 0.1, "%");
+	p = obs_properties_add_list(props, "nz_hex_style", obs_module_text("Noise.HexStyle"), OBS_COMBO_TYPE_LIST,
+				    OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("Noise.HexStyle.Cells"), 1);
+	obs_property_list_add_int(p, obs_module_text("Noise.HexStyle.Edges"), 2);
+	obs_property_list_add_int(p, obs_module_text("Noise.HexStyle.Both"), 3);
 	slider(props, "nz_evolve", "Noise.Evolve", 0.0, 5.0, 0.01, NULL);
 	slider(props, "nz_flow_x", "Noise.FlowX", -1000.0, 1000.0, 0.1, "px/s");
 	slider(props, "nz_flow_y", "Noise.FlowY", -1000.0, 1000.0, 0.1, "px/s");

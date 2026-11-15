@@ -104,6 +104,12 @@ static void stroke_filter_destroy(void *data)
 	if (filter->buffer_b) {
 		gs_texrender_destroy(filter->buffer_b);
 	}
+	if (filter->arc_a) {
+		gs_texrender_destroy(filter->arc_a);
+	}
+	if (filter->arc_b) {
+		gs_texrender_destroy(filter->arc_b);
+	}
 	if (filter->source_texrender) {
 		gs_texrender_destroy(filter->source_texrender);
 	}
@@ -147,6 +153,13 @@ static void stroke_filter_update(void *data, obs_data_t *settings)
 	filter->contour_falloff_start = (float)obs_data_get_double(settings, "contour_falloff_start");
 	filter->contour_falloff_end = (float)obs_data_get_double(settings, "contour_falloff_end");
 	filter->contour_spacing_power = (float)obs_data_get_double(settings, "contour_spacing_power");
+
+	filter->dash_style = (enum stroke_dash_style)obs_data_get_int(settings, "stroke_dash_style");
+	filter->dash_length = (float)obs_data_get_double(settings, "stroke_dash_length");
+	filter->dash_gap = (float)obs_data_get_double(settings, "stroke_dash_gap");
+	filter->dash_cap = (enum stroke_dash_cap)obs_data_get_int(settings, "stroke_dash_cap");
+	filter->dash_offset = (float)obs_data_get_double(settings, "stroke_dash_offset");
+	filter->dash_speed = (float)obs_data_get_double(settings, "stroke_dash_speed");
 
 	filter->padding_amount = obs_data_get_int(settings, "stroke_padding") == PADDING_MANUAL
 					 ? (uint32_t)obs_data_get_int(settings, "padding_amount")
@@ -219,6 +232,14 @@ static void stroke_filter_render_impl(void *data, gs_effect_t *effect)
 	// Reuse this frame's result for further views (preview, projectors),
 	// unless one wants a different color space.
 	if (filter->rendered && (filter->is_source || filter->working_space == gs_get_color_space())) {
+		// A cached result with marching dashes: keep the distance and
+		// arc fields, but draw the stroke again.
+		if (filter->redraw_stroke && !filter->rendering) {
+			filter->redraw_stroke = false;
+			filter->rendering = true;
+			render_jf_distance(filter);
+			filter->rendering = false;
+		}
 		render_cropped_output(filter);
 		return;
 	}
@@ -252,8 +273,11 @@ static void stroke_filter_render_impl(void *data, gs_effect_t *effect)
 	const float extent = contour ? fmaxf((float)filter->width, (float)filter->height)
 				     : filter->stroke_offset + filter->stroke_size;
 	render_jf_passes(filter, extent);
+	// Arc length along the outlines, for dashes (solid: nothing).
+	render_jf_arc(filter);
 
 	render_jf_distance(filter);
+	filter->redraw_stroke = false;
 
 	// 3. Draw result (filter->output_texrender) to source
 	render_cropped_output(filter);
@@ -377,6 +401,33 @@ static obs_properties_t *properties(void *data, bool is_source)
 	p = obs_properties_add_float_slider(props, "contour_falloff_end",
 					    obs_module_text("StrokeFilter.ContourFalloffEnd"), 0.0, 2000.0, 1.0);
 	obs_property_float_set_suffix(p, "px");
+
+	obs_property_t *dash_list = obs_properties_add_list(props, "stroke_dash_style",
+							    obs_module_text("StrokeFilter.Dash.Style"),
+							    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(dash_list, obs_module_text(STROKE_DASH_SOLID_LABEL), STROKE_DASH_SOLID);
+	obs_property_list_add_int(dash_list, obs_module_text(STROKE_DASH_DASHED_LABEL), STROKE_DASH_DASHED);
+	obs_property_list_add_int(dash_list, obs_module_text(STROKE_DASH_DOTTED_LABEL), STROKE_DASH_DOTTED);
+	obs_property_set_long_description(dash_list, obs_module_text("StrokeFilter.Dash.Style.Description"));
+	obs_property_set_modified_callback(dash_list, setting_dash_style_modified);
+
+	p = obs_properties_add_float_slider(props, "stroke_dash_length", obs_module_text("StrokeFilter.Dash.Length"),
+					    1.0, 2000.0, 1.0);
+	obs_property_float_set_suffix(p, "px");
+	p = obs_properties_add_float_slider(props, "stroke_dash_gap", obs_module_text("StrokeFilter.Dash.Gap"), 0.0,
+					    2000.0, 1.0);
+	obs_property_float_set_suffix(p, "px");
+	obs_property_t *cap_list = obs_properties_add_list(props, "stroke_dash_cap",
+							   obs_module_text("StrokeFilter.Dash.Cap"),
+							   OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(cap_list, obs_module_text("StrokeFilter.Dash.Cap.Square"), STROKE_DASH_CAP_SQUARE);
+	obs_property_list_add_int(cap_list, obs_module_text("StrokeFilter.Dash.Cap.Round"), STROKE_DASH_CAP_ROUND);
+	p = obs_properties_add_float_slider(props, "stroke_dash_offset", obs_module_text("StrokeFilter.Dash.Offset"),
+					    -1000.0, 1000.0, 0.1);
+	obs_property_float_set_suffix(p, "px");
+	p = obs_properties_add_float_slider(props, "stroke_dash_speed", obs_module_text("StrokeFilter.Dash.Speed"),
+					    -1000.0, 1000.0, 0.1);
+	obs_property_float_set_suffix(p, "px/s");
 
 	obs_property_t *stroke_fill_method_list = obs_properties_add_list(props, "stroke_fill_type",
 									  obs_module_text("StrokeFilter.FillType"),
@@ -503,6 +554,14 @@ static void stroke_filter_video_tick(void *data, float seconds)
 	}
 	if (!keep)
 		filter->rendered = false;
+
+	// Marching ants. A cached result keeps its distance and arc fields and
+	// only draws the stroke again (see stroke_filter_render_impl).
+	if (filter->dash_style != STROKE_DASH_SOLID && filter->dash_speed != 0.0f) {
+		filter->dash_time += seconds;
+		if (keep)
+			filter->redraw_stroke = true;
+	}
 }
 
 static void stroke_filter_defaults(obs_data_t *settings)
@@ -522,6 +581,12 @@ static void stroke_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "jump_flood_threshold_inner", 0.0);
 	obs_data_set_default_double(settings, "contour_falloff_start", 0.0);
 	obs_data_set_default_double(settings, "contour_falloff_end", 2000.0);
+	obs_data_set_default_int(settings, "stroke_dash_style", STROKE_DASH_SOLID);
+	obs_data_set_default_double(settings, "stroke_dash_length", 20.0);
+	obs_data_set_default_double(settings, "stroke_dash_gap", 10.0);
+	obs_data_set_default_int(settings, "stroke_dash_cap", STROKE_DASH_CAP_ROUND);
+	obs_data_set_default_double(settings, "stroke_dash_offset", 0.0);
+	obs_data_set_default_double(settings, "stroke_dash_speed", 0.0);
 	gradient_defaults(settings, STROKE_GRADIENT_PREFIX);
 }
 
@@ -574,6 +639,18 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 		stroke_setting_visibility("stroke_fill_image", false, props);
 		break;
 	}
+	return true;
+}
+
+static bool setting_dash_style_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *settings)
+{
+	UNUSED_PARAMETER(p);
+	enum stroke_dash_style style = (enum stroke_dash_style)obs_data_get_int(settings, "stroke_dash_style");
+	stroke_setting_visibility("stroke_dash_length", style == STROKE_DASH_DASHED, props);
+	stroke_setting_visibility("stroke_dash_cap", style == STROKE_DASH_DASHED, props);
+	stroke_setting_visibility("stroke_dash_gap", style != STROKE_DASH_SOLID, props);
+	stroke_setting_visibility("stroke_dash_offset", style != STROKE_DASH_SOLID, props);
+	stroke_setting_visibility("stroke_dash_speed", style != STROKE_DASH_SOLID, props);
 	return true;
 }
 
