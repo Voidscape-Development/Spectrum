@@ -1,0 +1,144 @@
+// Frosted glass: a gaussian blur seen through a bumpy glass surface. The
+// blur runs on a linear premultiplied buffer (BlurH/BlurV); the Frost pass
+// then looks the blurred image up through a noise-driven offset field whose
+// pattern imitates frosted, ribbed (reeded), pebbled (bathroom) or rippled
+// glass, and optionally tints it.
+
+#include "linear_common.effect"
+
+#define MAX_TAPS 160
+
+uniform float radius = 10.0;      // gaussian blur radius, px
+uniform float2 blur_dir;          // one texel along the blur direction
+
+uniform float frost_style = 0.0;  // 0 frosted, 1 ribbed, 2 pebbled, 3 rippled
+uniform float grain = 4.0;        // pattern scale, px
+uniform float amount = 12.0;      // scatter distance, px
+uniform float2 pattern_rot;       // cos, sin of the pattern angle
+uniform float4 tint_color;        // linear rgb
+uniform float tint_amount = 0.0;
+
+float gauss(float x, float sigma)
+{
+	return exp(-0.5 * x * x / (sigma * sigma));
+}
+
+// Separable gaussian; adjacent taps are merged into one bilinear fetch.
+float4 PSBlur(VertData v_in) : TARGET
+{
+	float sigma = max(radius / 3.0, 0.3);
+	float4 acc = image.SampleLevel(pointSampler, v_in.uv, 0.0);
+	float wsum = 1.0;
+	for (int i = 1; i <= MAX_TAPS; i += 2) {
+		float x = float(i);
+		if (x > radius + 1.0)
+			break;
+		float w1 = gauss(x, sigma);
+		float w2 = gauss(x + 1.0, sigma);
+		float w = w1 + w2;
+		float off = (x * w1 + (x + 1.0) * w2) / w;
+		acc += (image.SampleLevel(linearSampler, v_in.uv + blur_dir * off, 0.0) +
+			image.SampleLevel(linearSampler, v_in.uv - blur_dir * off, 0.0)) *
+		       w;
+		wsum += 2.0 * w;
+	}
+	return acc / wsum;
+}
+
+float2 hash22(float2 p)
+{
+	float3 p3 = frac(float3(p.x, p.y, p.x) * float3(0.1031, 0.1030, 0.0973));
+	p3 += dot(p3, p3.yzx + 33.33);
+	return frac((p3.xx + p3.yz) * p3.zy);
+}
+
+// Smooth 2D vector value noise in [-1, 1].
+float2 vnoise2(float2 p)
+{
+	float2 i = floor(p);
+	float2 f = p - i;
+	float2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+	float2 a = hash22(i);
+	float2 b = hash22(i + float2(1.0, 0.0));
+	float2 c = hash22(i + float2(0.0, 1.0));
+	float2 d = hash22(i + float2(1.0, 1.0));
+	return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y) * 2.0 - 1.0;
+}
+
+// Offset in px, in the pattern's rotated frame. q is the rotated pixel
+// position.
+float2 frost_offset(float2 q, float2 px)
+{
+	float g = max(grain, 0.5);
+	if (frost_style < 0.5) {
+		// Frosted: smooth multi-scale scatter plus per-pixel sparkle.
+		float2 n = vnoise2(q / g) * 0.55 + vnoise2(q / (g * 0.43) + 17.31) * 0.3;
+		float2 j = hash22(px + 0.5) * 2.0 - 1.0;
+		return (n + j * 0.25) * amount;
+	}
+	if (frost_style < 1.5) {
+		// Ribbed / reeded: each rib is a cylindrical lens squeezing the
+		// image across it.
+		float t = frac(q.x / g) - 0.5;
+		return float2(-2.0 * t * amount, 0.0);
+	}
+	if (frost_style < 2.5) {
+		// Pebbled: cells that each act as a small lens.
+		float2 p = q / g;
+		float2 cell = floor(p);
+		float best = 1.0e9;
+		float2 d = float2(0.0, 0.0);
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				float2 c = cell + float2(float(x), float(y));
+				float2 r = c + 0.15 + hash22(c) * 0.7 - p;
+				float dd = dot(r, r);
+				if (dd < best) {
+					best = dd;
+					d = r;
+				}
+			}
+		}
+		return d * 1.6 * amount;
+	}
+	// Rippled: wavy glass.
+	float2 n = vnoise2(q / (g * 4.0));
+	return float2(sin((q.y / g) * 1.5708 + n.x * 2.5), 0.4 * sin((q.x / g) * 0.9 + n.y * 2.5)) * amount;
+}
+
+float4 PSFrost(VertData v_in) : TARGET
+{
+	float2 px = v_in.uv * uv_size;
+	float2 q = float2(px.x * pattern_rot.x + px.y * pattern_rot.y, -px.x * pattern_rot.y + px.y * pattern_rot.x);
+	float2 o = frost_offset(q, floor(px));
+	// Back to image orientation.
+	float2 off = float2(o.x * pattern_rot.x - o.y * pattern_rot.y, o.x * pattern_rot.y + o.y * pattern_rot.x);
+	float4 c = image.SampleLevel(linearSampler, v_in.uv + off / uv_size, 0.0);
+	float3 rgb = c.a > 0.00001 ? c.rgb / c.a : float3(0.0, 0.0, 0.0);
+	if (tint_amount > 0.0) {
+		// Mix in a perceptual (gamma 2.2) space so a pale tint frosts the
+		// image evenly instead of washing out the shadows.
+		float3 g = pow(max(rgb, float3(0.0, 0.0, 0.0)), float3(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2));
+		float3 t = pow(max(tint_color.rgb, float3(0.0, 0.0, 0.0)), float3(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2));
+		rgb = pow(lerp(g, t, tint_amount), float3(2.2, 2.2, 2.2));
+	}
+	return encode_output(rgb, c.a, v_in.uv);
+}
+
+technique Blur
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSBlur(v_in);
+	}
+}
+
+technique Frost
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSFrost(v_in);
+	}
+}

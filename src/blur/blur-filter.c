@@ -6,6 +6,8 @@
 #include "algorithms/pixelate.h"
 #include "algorithms/dual_kawase.h"
 #include "algorithms/temporal.h"
+#include "algorithms/lens.h"
+#include "algorithms/frosted.h"
 #include "../common/presets.h"
 
 // How often (seconds) to retry resolving a named source that wasn't found.
@@ -45,6 +47,9 @@ static bool settings_blur_directional(obs_properties_t *props);
 static bool settings_blur_zoom(obs_properties_t *props);
 static bool settings_blur_tilt_shift(obs_properties_t *props);
 static bool settings_blur_vector(obs_properties_t *props, blur_filter_data_t *filter);
+static bool settings_blur_depth(obs_properties_t *props);
+static void lens_frost_visibility(obs_properties_t *props, obs_data_t *settings);
+static bool setting_lens_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *settings);
 
 static void apply_effect_mask(blur_filter_data_t *filter);
 static void apply_effect_mask_box(blur_filter_data_t *filter, float left, float right, float top, float bot,
@@ -112,6 +117,33 @@ static void blur_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, "vector_source", "");
 	obs_data_set_default_double(settings, "temporal_current_weight", 0.95);
 	obs_data_set_default_double(settings, "temporal_clear_threshold", 5.0);
+
+	// Lens (bokeh) / depth blur
+	obs_data_set_default_int(settings, "lens_shape", LENS_SHAPE_CIRCLE);
+	obs_data_set_default_int(settings, "lens_blades", 6);
+	obs_data_set_default_double(settings, "lens_rotation", 0.0);
+	obs_data_set_default_double(settings, "lens_roundness", 0.0);
+	obs_data_set_default_int(settings, "lens_quality", LENS_QUALITY_NORMAL);
+	obs_data_set_default_bool(settings, "lens_highlights", false);
+	obs_data_set_default_double(settings, "lens_highlight_threshold", 80.0);
+	obs_data_set_default_double(settings, "lens_highlight_gain", 10.0);
+	obs_data_set_default_int(settings, "depth_map", DEPTH_MAP_LUMINANCE);
+	obs_data_set_default_string(settings, "depth_source", "");
+	obs_data_set_default_int(settings, "depth_focus_mode", DEPTH_FOCUS_DISTANCE);
+	obs_data_set_default_double(settings, "depth_focus_distance", 100.0);
+	obs_data_set_default_double(settings, "depth_focus_range", 10.0);
+	obs_data_set_default_double(settings, "depth_focus_falloff", 50.0);
+	obs_data_set_default_double(settings, "depth_focus_x", 50.0);
+	obs_data_set_default_double(settings, "depth_focus_y", 50.0);
+
+	// Frosted glass
+	obs_data_set_default_int(settings, "frost_style", FROST_STYLE_FROSTED);
+	obs_data_set_default_double(settings, "frost_grain", 4.0);
+	obs_data_set_default_double(settings, "frost_amount", 12.0);
+	obs_data_set_default_double(settings, "frost_angle", 0.0);
+	obs_data_set_default_bool(settings, "frost_tint", false);
+	obs_data_set_default_int(settings, "frost_tint_color", 0xFFFFF4EA);
+	obs_data_set_default_double(settings, "frost_tint_amount", 20.0);
 }
 
 static void *blur_filter_create(obs_data_t *settings, obs_source_t *source)
@@ -196,6 +228,16 @@ static void blur_filter_destroy(void *data)
 		filter->vb_gradient,
 		filter->vb_smoothed_gradient,
 		filter->vector_source_texrender,
+		filter->lens_linear,
+		filter->lens_coc,
+		filter->lens_tile,
+		filter->lens_tile_max,
+		filter->lens_half,
+		filter->lens_quarter,
+		filter->depth_source_texrender,
+		filter->frost_linear,
+		filter->frost_blur,
+		filter->mask_map_texrender,
 	};
 
 	obs_enter_graphics();
@@ -212,11 +254,17 @@ static void blur_filter_destroy(void *data)
 	}
 	if (filter->mask_image)
 		gs_texture_destroy(filter->mask_image);
+	gs_texture_t *textures[] = {filter->lens_kernel, filter->mask_black, filter->mask_white};
+	for (size_t i = 0; i < OBS_COUNTOF(textures); i++) {
+		if (textures[i])
+			gs_texture_destroy(textures[i]);
+	}
 	obs_leave_graphics();
 
 	external_source_free(&filter->background);
 	external_source_free(&filter->mask_source);
 	external_source_free(&filter->vector_source);
+	external_source_free(&filter->depth_source);
 
 	da_free(filter->offset);
 	da_free(filter->kernel);
@@ -502,6 +550,40 @@ static void blur_filter_update(void *data, obs_data_t *settings)
 	external_source_set(filter, &filter->vector_source, obs_data_get_string(settings, "vector_source"));
 	external_source_set(filter, &filter->background, obs_data_get_string(settings, "background"));
 
+	filter->lens_shape = (int)obs_data_get_int(settings, "lens_shape");
+	filter->lens_blades = (int)obs_data_get_int(settings, "lens_blades");
+	filter->lens_rotation = (float)obs_data_get_double(settings, "lens_rotation");
+	filter->lens_roundness = (float)obs_data_get_double(settings, "lens_roundness");
+	filter->lens_quality = (int)obs_data_get_int(settings, "lens_quality");
+	filter->lens_highlights = obs_data_get_bool(settings, "lens_highlights");
+	filter->lens_highlight_threshold = (float)obs_data_get_double(settings, "lens_highlight_threshold");
+	filter->lens_highlight_gain = (float)obs_data_get_double(settings, "lens_highlight_gain");
+
+	filter->depth_map = (int)obs_data_get_int(settings, "depth_map");
+	external_source_set(filter, &filter->depth_source, obs_data_get_string(settings, "depth_source"));
+	filter->depth_invert = obs_data_get_bool(settings, "depth_invert");
+	filter->depth_focus_mode = (int)obs_data_get_int(settings, "depth_focus_mode");
+	filter->depth_focus_distance = (float)obs_data_get_double(settings, "depth_focus_distance");
+	filter->depth_focus_range = (float)obs_data_get_double(settings, "depth_focus_range");
+	filter->depth_focus_falloff = (float)obs_data_get_double(settings, "depth_focus_falloff");
+	filter->depth_focus_x = (float)obs_data_get_double(settings, "depth_focus_x");
+	filter->depth_focus_y = (float)obs_data_get_double(settings, "depth_focus_y");
+
+	filter->frost_style = (int)obs_data_get_int(settings, "frost_style");
+	filter->frost_grain = (float)obs_data_get_double(settings, "frost_grain");
+	filter->frost_amount = (float)obs_data_get_double(settings, "frost_amount");
+	filter->frost_angle = (float)obs_data_get_double(settings, "frost_angle");
+	filter->frost_tint = obs_data_get_bool(settings, "frost_tint");
+	filter->frost_tint_amount = (float)obs_data_get_double(settings, "frost_tint_amount");
+	{
+		// OBS colors are 0xAABBGGRR, sRGB encoded; the shader mixes in
+		// linear light.
+		const uint32_t c = (uint32_t)obs_data_get_int(settings, "frost_tint_color");
+		struct vec4 tint;
+		vec4_from_rgba_srgb(&tint, c);
+		filter->frost_tint_color = tint;
+	}
+
 	// Changing the algorithm/type swaps effects, parameter handles and
 	// render callbacks. Do it under the graphics lock so the render thread
 	// never sees a mix of old and new state.
@@ -669,10 +751,12 @@ static void blur_filter_video_render(void *data, gs_effect_t *effect)
 	}
 
 	// 2. Apply effect to texture, result in filter->output_texrender
+	filter->skip_effect_mask = false;
 	filter->video_render(filter);
 
-	// 3. Apply mask to texture if one is selected by the user.
-	if (filter->mask_type != EFFECT_MASK_TYPE_NONE) {
+	// 3. Apply mask to texture if one is selected by the user (unless the
+	//    algorithm already used it, e.g. as a depth map).
+	if (filter->mask_type != EFFECT_MASK_TYPE_NONE && !filter->skip_effect_mask) {
 		apply_effect_mask(filter);
 	}
 
@@ -733,6 +817,16 @@ gs_texture_t *blend_composite(gs_texture_t *texture, blur_filter_data_t *data)
 static bool begin_mask_pass(blur_filter_data_t *filter)
 {
 	gs_effect_t *effect = filter->effect_mask_effect;
+	if (filter->mask_as_map) {
+		// Mixing black (unmasked) and white (masked) yields the mask.
+		if (!effect || !filter->mask_black || !filter->mask_white)
+			return false;
+		if (filter->param_mask_image)
+			gs_effect_set_texture(filter->param_mask_image, filter->mask_black);
+		if (filter->param_filtered_image)
+			gs_effect_set_texture(filter->param_filtered_image, filter->mask_white);
+		return true;
+	}
 	gs_texture_t *texture = gs_texrender_get_texture(filter->input_texrender);
 	gs_texture_t *filtered_texture = filter->output_texrender ? gs_texrender_get_texture(filter->output_texrender)
 								  : NULL;
@@ -757,18 +851,54 @@ static void draw_mask_pass(blur_filter_data_t *filter)
 {
 	gs_effect_t *effect = filter->effect_mask_effect;
 	gs_texture_t *texture = gs_texrender_get_texture(filter->input_texrender);
+	gs_texrender_t **target = &filter->output_texrender;
+	enum gs_color_format format = filter->color_format;
+	if (filter->mask_as_map) {
+		texture = filter->mask_black;
+		target = &filter->mask_map_texrender;
+		format = GS_RGBA;
+	}
 
+	const bool previous_srgb = gs_framebuffer_srgb_enabled();
+	if (filter->mask_as_map)
+		gs_enable_framebuffer_srgb(false);
 	blur_set_blending_parameters();
 
-	filter->output_texrender = blur_create_or_reset_texrender(filter->output_texrender, filter->color_format);
+	*target = blur_create_or_reset_texrender(*target, format);
 
-	if (gs_texrender_begin(filter->output_texrender, filter->width, filter->height)) {
+	if (gs_texrender_begin(*target, filter->width, filter->height)) {
 		gs_ortho(0.0f, (float)filter->width, 0.0f, (float)filter->height, -100.0f, 100.0f);
 		while (gs_effect_loop(effect, "Draw"))
 			gs_draw_sprite(texture, 0, filter->width, filter->height);
-		gs_texrender_end(filter->output_texrender);
+		gs_texrender_end(*target);
+		if (filter->mask_as_map)
+			filter->mask_map_rendered = true;
 	}
 	gs_blend_state_pop();
+	gs_enable_framebuffer_srgb(previous_srgb);
+}
+
+static gs_texture_t *create_solid_texture(uint32_t color)
+{
+	const uint8_t *planes[] = {(const uint8_t *)&color};
+	return gs_texture_create(1, 1, GS_RGBA, 1, planes, 0);
+}
+
+gs_texture_t *blur_render_effect_mask_map(blur_filter_data_t *filter)
+{
+	if (filter->mask_type == EFFECT_MASK_TYPE_NONE || !filter->effect_mask_effect)
+		return NULL;
+	if (!filter->mask_black)
+		filter->mask_black = create_solid_texture(0xFF000000);
+	if (!filter->mask_white)
+		filter->mask_white = create_solid_texture(0xFFFFFFFF);
+
+	filter->mask_as_map = true;
+	filter->mask_map_rendered = false;
+	apply_effect_mask(filter);
+	filter->mask_as_map = false;
+
+	return filter->mask_map_rendered ? gs_texrender_get_texture(filter->mask_map_texrender) : NULL;
 }
 
 static void apply_effect_mask(blur_filter_data_t *filter)
@@ -937,6 +1067,8 @@ static obs_properties_t *blur_filter_properties(void *data)
 	obs_property_list_add_int(blur_algorithms, obs_module_text(ALGO_DUAL_KAWASE_LABEL), ALGO_DUAL_KAWASE);
 	obs_property_list_add_int(blur_algorithms, obs_module_text(ALGO_PIXELATE_LABEL), ALGO_PIXELATE);
 	obs_property_list_add_int(blur_algorithms, obs_module_text(ALGO_TEMPORAL_LABEL), ALGO_TEMPORAL);
+	obs_property_list_add_int(blur_algorithms, obs_module_text(ALGO_LENS_LABEL), ALGO_LENS);
+	obs_property_list_add_int(blur_algorithms, obs_module_text(ALGO_FROSTED_LABEL), ALGO_FROSTED);
 
 	obs_property_set_modified_callback2(blur_algorithms, setting_blur_algorithm_modified, data);
 
@@ -969,6 +1101,98 @@ static obs_properties_t *blur_filter_properties(void *data)
 	obs_property_t *p =
 		obs_properties_add_float_slider(props, "radius", obs_module_text("BlurFilter.Radius"), 0.0, 80.1, 0.1);
 	obs_property_float_set_suffix(p, "px");
+
+	// Lens (bokeh) aperture
+	obs_properties_t *lens = obs_properties_create();
+	p = obs_properties_add_list(lens, "lens_shape", obs_module_text("BlurFilter.Lens.Shape"), OBS_COMBO_TYPE_LIST,
+				    OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Lens.Shape.Circle"), LENS_SHAPE_CIRCLE);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Lens.Shape.Hexagon"), LENS_SHAPE_HEXAGON);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Lens.Shape.Octagon"), LENS_SHAPE_OCTAGON);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Lens.Shape.Polygon"), LENS_SHAPE_POLYGON);
+	obs_property_set_modified_callback(p, setting_lens_modified);
+	obs_properties_add_int_slider(lens, "lens_blades", obs_module_text("BlurFilter.Lens.Blades"), 3, 16, 1);
+	p = obs_properties_add_float_slider(lens, "lens_rotation", obs_module_text("BlurFilter.Lens.Rotation"), -180.0,
+					    180.0, 0.1);
+	obs_property_float_set_suffix(p, "deg");
+	p = obs_properties_add_float_slider(lens, "lens_roundness", obs_module_text("BlurFilter.Lens.Roundness"), 0.0,
+					    100.0, 0.1);
+	obs_property_float_set_suffix(p, "%");
+	p = obs_properties_add_list(lens, "lens_quality", obs_module_text("BlurFilter.Lens.Quality"),
+				    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Lens.Quality.Draft"), LENS_QUALITY_DRAFT);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Lens.Quality.Normal"), LENS_QUALITY_NORMAL);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Lens.Quality.High"), LENS_QUALITY_HIGH);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Lens.Quality.Ultra"), LENS_QUALITY_ULTRA);
+	p = obs_properties_add_bool(lens, "lens_highlights", obs_module_text("BlurFilter.Lens.Highlights"));
+	obs_property_set_modified_callback(p, setting_lens_modified);
+	p = obs_properties_add_float_slider(lens, "lens_highlight_threshold",
+					    obs_module_text("BlurFilter.Lens.HighlightThreshold"), 0.0, 100.0, 0.1);
+	obs_property_float_set_suffix(p, "%");
+	obs_properties_add_float_slider(lens, "lens_highlight_gain", obs_module_text("BlurFilter.Lens.HighlightGain"),
+					0.0, 200.0, 0.1);
+	obs_properties_add_group(props, "lens_group", obs_module_text("BlurFilter.Lens"), OBS_GROUP_NORMAL, lens);
+
+	// Depth map
+	obs_properties_t *depth = obs_properties_create();
+	p = obs_properties_add_list(depth, "depth_map", obs_module_text("BlurFilter.Depth.Map"), OBS_COMBO_TYPE_LIST,
+				    OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Depth.Map.Luminance"), DEPTH_MAP_LUMINANCE);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Depth.Map.Alpha"), DEPTH_MAP_ALPHA);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Depth.Map.EffectMask"), DEPTH_MAP_EFFECT_MASK);
+	obs_property_set_modified_callback(p, setting_lens_modified);
+	p = obs_properties_add_list(depth, "depth_source", obs_module_text("BlurFilter.Depth.Source"),
+				    OBS_COMBO_TYPE_EDITABLE, OBS_COMBO_FORMAT_STRING);
+	obs_enum_sources(blur_add_source_to_list, p);
+	obs_enum_scenes(blur_add_source_to_list, p);
+	obs_property_list_insert_string(p, 0, obs_module_text("BlurFilter.Background.None"), "");
+	obs_properties_add_bool(depth, "depth_invert", obs_module_text("BlurFilter.Depth.Invert"));
+	p = obs_properties_add_list(depth, "depth_focus_mode", obs_module_text("BlurFilter.Depth.FocusMode"),
+				    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Depth.FocusMode.Distance"), DEPTH_FOCUS_DISTANCE);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Depth.FocusMode.Point"), DEPTH_FOCUS_POINT);
+	obs_property_set_modified_callback(p, setting_lens_modified);
+	p = obs_properties_add_float_slider(depth, "depth_focus_distance",
+					    obs_module_text("BlurFilter.Depth.FocusDistance"), 0.0, 100.0, 0.1);
+	obs_property_float_set_suffix(p, "%");
+	p = obs_properties_add_float_slider(depth, "depth_focus_x", obs_module_text("BlurFilter.Depth.FocusX"), 0.0,
+					    100.0, 0.1);
+	obs_property_float_set_suffix(p, "%");
+	p = obs_properties_add_float_slider(depth, "depth_focus_y", obs_module_text("BlurFilter.Depth.FocusY"), 0.0,
+					    100.0, 0.1);
+	obs_property_float_set_suffix(p, "%");
+	p = obs_properties_add_float_slider(depth, "depth_focus_range", obs_module_text("BlurFilter.Depth.FocusRange"),
+					    0.0, 100.0, 0.1);
+	obs_property_float_set_suffix(p, "%");
+	p = obs_properties_add_float_slider(depth, "depth_focus_falloff",
+					    obs_module_text("BlurFilter.Depth.FocusFalloff"), 0.1, 100.0, 0.1);
+	obs_property_float_set_suffix(p, "%");
+	obs_properties_add_group(props, "depth_group", obs_module_text("BlurFilter.Depth"), OBS_GROUP_NORMAL, depth);
+
+	// Frosted glass
+	obs_properties_t *frost = obs_properties_create();
+	p = obs_properties_add_list(frost, "frost_style", obs_module_text("BlurFilter.Frost.Style"),
+				    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Frost.Style.Frosted"), FROST_STYLE_FROSTED);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Frost.Style.Ribbed"), FROST_STYLE_RIBBED);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Frost.Style.Pebbled"), FROST_STYLE_PEBBLED);
+	obs_property_list_add_int(p, obs_module_text("BlurFilter.Frost.Style.Rippled"), FROST_STYLE_RIPPLED);
+	p = obs_properties_add_float_slider(frost, "frost_grain", obs_module_text("BlurFilter.Frost.Grain"), 0.5, 200.0,
+					    0.1);
+	obs_property_float_set_suffix(p, "px");
+	p = obs_properties_add_float_slider(frost, "frost_amount", obs_module_text("BlurFilter.Frost.Amount"), 0.0,
+					    200.0, 0.1);
+	obs_property_float_set_suffix(p, "px");
+	p = obs_properties_add_float_slider(frost, "frost_angle", obs_module_text("BlurFilter.Frost.Angle"), -180.0,
+					    180.0, 0.1);
+	obs_property_float_set_suffix(p, "deg");
+	p = obs_properties_add_bool(frost, "frost_tint", obs_module_text("BlurFilter.Frost.Tint"));
+	obs_property_set_modified_callback(p, setting_lens_modified);
+	obs_properties_add_color(frost, "frost_tint_color", obs_module_text("BlurFilter.Frost.TintColor"));
+	p = obs_properties_add_float_slider(frost, "frost_tint_amount", obs_module_text("BlurFilter.Frost.TintAmount"),
+					    0.0, 100.0, 0.1);
+	obs_property_float_set_suffix(p, "%");
+	obs_properties_add_group(props, "frost_group", obs_module_text("BlurFilter.Frost"), OBS_GROUP_NORMAL, frost);
 
 	obs_properties_t *vector_blur = obs_properties_create();
 
@@ -1368,6 +1592,10 @@ static bool setting_blur_algorithm_modified(void *data, obs_properties_t *props,
 
 		set_blur_radius_settings(obs_module_text("BlurFilter.Radius"), 0.0f, 80.01f, 0.1f, props);
 		set_gaussian_blur_types(props);
+		if (obs_data_get_int(settings, "blur_type") == TYPE_DEPTH) {
+			obs_data_set_int(settings, "blur_type", TYPE_AREA);
+			settings_blur_area(props, settings);
+		}
 		break;
 	case ALGO_BOX:
 		blur_setting_visibility("radius", true, props);
@@ -1387,6 +1615,10 @@ static bool setting_blur_algorithm_modified(void *data, obs_properties_t *props,
 
 		set_blur_radius_settings(obs_module_text("BlurFilter.Radius"), 0.0f, 100.01f, 0.1f, props);
 		set_box_blur_types(props);
+		if (obs_data_get_int(settings, "blur_type") == TYPE_DEPTH) {
+			obs_data_set_int(settings, "blur_type", TYPE_AREA);
+			settings_blur_area(props, settings);
+		}
 		break;
 	case ALGO_DUAL_KAWASE:
 		blur_setting_visibility("radius", false, props);
@@ -1444,7 +1676,42 @@ static bool setting_blur_algorithm_modified(void *data, obs_properties_t *props,
 		blur_setting_visibility("pixelate_time", false, props);
 		blur_setting_visibility("pixelate_animation_speed", false, props);
 		break;
+	case ALGO_LENS:
+	case ALGO_FROSTED: {
+		const bool lens = blur_algorithm == ALGO_LENS;
+		blur_setting_visibility("radius", true, props);
+		blur_setting_visibility("temporal_current_weight", false, props);
+		blur_setting_visibility("temporal_clear_threshold", false, props);
+		blur_setting_visibility("passes", false, props);
+		blur_setting_visibility("kawase_passes", false, props);
+		blur_setting_visibility("blur_type", lens, props);
+		blur_setting_visibility("pixelate_type", false, props);
+		blur_setting_visibility("pixelate_smoothing_pct", false, props);
+		blur_setting_visibility("pixelate_rotation", false, props);
+		blur_setting_visibility("pixelate_origin_x", false, props);
+		blur_setting_visibility("pixelate_origin_y", false, props);
+		blur_setting_visibility("pixelate_animate", false, props);
+		blur_setting_visibility("pixelate_time", false, props);
+		blur_setting_visibility("pixelate_animation_speed", false, props);
+		set_blur_radius_settings(obs_module_text("BlurFilter.Radius"), 0.0f, lens ? 150.01f : 100.01f, 0.1f,
+					 props);
+		const long long type = obs_data_get_int(settings, "blur_type");
+		if (lens) {
+			set_lens_blur_types(props);
+			if (type != TYPE_DEPTH && type != TYPE_AREA)
+				obs_data_set_int(settings, "blur_type", TYPE_AREA);
+		} else {
+			set_frosted_blur_types(props);
+			obs_data_set_int(settings, "blur_type", TYPE_AREA);
+		}
+		if (obs_data_get_int(settings, "blur_type") == TYPE_DEPTH)
+			settings_blur_depth(props);
+		else
+			settings_blur_area(props, settings);
+		break;
 	}
+	}
+	lens_frost_visibility(props, settings);
 	return true;
 }
 
@@ -1455,18 +1722,21 @@ static bool setting_blur_types_modified(void *data, obs_properties_t *props, obs
 	blur_filter_data_t *filter = data;
 	int blur_type = (int)obs_data_get_int(settings, "blur_type");
 	if (blur_type == TYPE_AREA) {
-		return settings_blur_area(props, settings);
+		settings_blur_area(props, settings);
 	} else if (blur_type == TYPE_DIRECTIONAL) {
-		return settings_blur_directional(props);
+		settings_blur_directional(props);
 	} else if (blur_type == TYPE_ZOOM) {
-		return settings_blur_zoom(props);
+		settings_blur_zoom(props);
 	} else if (blur_type == TYPE_MOTION) {
-		return settings_blur_directional(props);
+		settings_blur_directional(props);
 	} else if (blur_type == TYPE_TILTSHIFT) {
-		return settings_blur_tilt_shift(props);
+		settings_blur_tilt_shift(props);
 	} else if (blur_type == TYPE_VECTOR) {
-		return settings_blur_vector(props, filter);
+		settings_blur_vector(props, filter);
+	} else if (blur_type == TYPE_DEPTH) {
+		settings_blur_depth(props);
 	}
+	lens_frost_visibility(props, settings);
 	return true;
 }
 
@@ -1539,6 +1809,67 @@ static bool settings_blur_vector(obs_properties_t *props, blur_filter_data_t *fi
 	blur_setting_visibility("tilt_shift_bounds", false, props);
 	blur_setting_visibility("vector_group", true, props);
 	UNUSED_PARAMETER(filter);
+	return true;
+}
+
+static bool settings_blur_depth(obs_properties_t *props)
+{
+	blur_setting_visibility("radius", true, props);
+	blur_setting_visibility("angle", false, props);
+	blur_setting_visibility("center_coordinate", false, props);
+	blur_setting_visibility("background", true, props);
+	blur_setting_visibility("tilt_shift_bounds", false, props);
+	blur_setting_visibility("vector_group", false, props);
+	return true;
+}
+
+// Visibility of the lens, depth and frosted glass settings, which depend on
+// the algorithm, the blur type and their own options.
+static void lens_frost_visibility(obs_properties_t *props, obs_data_t *settings)
+{
+	const long long algorithm = obs_data_get_int(settings, "blur_algorithm");
+	const bool lens = algorithm == ALGO_LENS;
+	const bool depth = lens && obs_data_get_int(settings, "blur_type") == TYPE_DEPTH;
+
+	blur_setting_visibility("lens_group", lens, props);
+	blur_setting_visibility("depth_group", depth, props);
+	blur_setting_visibility("frost_group", algorithm == ALGO_FROSTED, props);
+	if (lens) {
+		obs_property_set_description(obs_properties_get(props, "radius"),
+					     obs_module_text(depth ? "BlurFilter.Depth.MaxRadius"
+								   : "BlurFilter.Radius"));
+	}
+
+	const long long shape = obs_data_get_int(settings, "lens_shape");
+	blur_setting_visibility("lens_blades", shape == LENS_SHAPE_POLYGON, props);
+	blur_setting_visibility("lens_rotation", shape != LENS_SHAPE_CIRCLE, props);
+	blur_setting_visibility("lens_roundness", shape != LENS_SHAPE_CIRCLE, props);
+	const bool highlights = obs_data_get_bool(settings, "lens_highlights");
+	blur_setting_visibility("lens_highlight_threshold", highlights, props);
+	blur_setting_visibility("lens_highlight_gain", highlights, props);
+
+	const bool mask_map = obs_data_get_int(settings, "depth_map") == DEPTH_MAP_EFFECT_MASK;
+	const bool point = obs_data_get_int(settings, "depth_focus_mode") == DEPTH_FOCUS_POINT;
+	blur_setting_visibility("depth_source", !mask_map, props);
+	blur_setting_visibility("depth_focus_mode", !mask_map, props);
+	blur_setting_visibility("depth_focus_distance", !mask_map && !point, props);
+	blur_setting_visibility("depth_focus_x", !mask_map && point, props);
+	blur_setting_visibility("depth_focus_y", !mask_map && point, props);
+	blur_setting_visibility("depth_focus_range", !mask_map, props);
+	blur_setting_visibility("depth_focus_falloff", !mask_map, props);
+	// The Position Picker only has the focus point handle.
+	if (obs_properties_get(props, "spectrum_position_picker"))
+		blur_setting_visibility("spectrum_position_picker", depth && !mask_map && point, props);
+
+	const bool tint = obs_data_get_bool(settings, "frost_tint");
+	blur_setting_visibility("frost_tint_color", tint, props);
+	blur_setting_visibility("frost_tint_amount", tint, props);
+}
+
+static bool setting_lens_modified(obs_properties_t *props, obs_property_t *p, obs_data_t *settings)
+{
+	UNUSED_PARAMETER(p);
+	lens_frost_visibility(props, settings);
 	return true;
 }
 
@@ -1658,6 +1989,7 @@ static void blur_filter_video_tick(void *data, float seconds)
 		external_source_refresh(filter, &filter->mask_source);
 		external_source_refresh(filter, &filter->background);
 		external_source_refresh(filter, &filter->vector_source);
+		external_source_refresh(filter, &filter->depth_source);
 	}
 
 	if (filter->hotkey == OBS_INVALID_HOTKEY_PAIR_ID) {
@@ -1762,6 +2094,12 @@ static void blur_filter_reload_effect(blur_filter_data_t *filter)
 		break;
 	case ALGO_TEMPORAL:
 		temporal_setup_callbacks(filter);
+		break;
+	case ALGO_LENS:
+		lens_setup_callbacks(filter);
+		break;
+	case ALGO_FROSTED:
+		frosted_setup_callbacks(filter);
 		break;
 	}
 

@@ -180,4 +180,14 @@ target_sources(
     src/animate/animate-filter.c
 )
 
+# Blur: lens (bokeh), depth and frosted glass algorithms
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/blur/algorithms/lens.c
+    src/blur/algorithms/lens.h
+    src/blur/algorithms/frosted.c
+    src/blur/algorithms/frosted.h
+)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

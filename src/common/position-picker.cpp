@@ -99,6 +99,8 @@ const std::map<std::string, std::vector<HandleSpec>> &specs()
 		{"spectrum_distort_filter",
 		 {PT_IF("Picker.DistortCenter", "ds_center_x", "ds_center_y", "ds_mode", 2, 3, 4),
 		  ANGLE_IF("Picker.WaveAngle", "ds_angle", -1, false, "ds_mode", 1)}},
+		{"spectrum_blur_filter",
+		 {PT_IF("Picker.FocusPoint", "depth_focus_x", "depth_focus_y", "depth_focus_mode", 1)}},
 		{"spectrum_light_filter",
 		 {PT("Picker.RaysSource", "li_rays_x", "li_rays_y"),
 		  PT("Picker.FlarePosition", "li_flare_x", "li_flare_y"),

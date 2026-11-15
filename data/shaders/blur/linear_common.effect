@@ -1,0 +1,121 @@
+// Shared by the lens (bokeh/depth) and frosted glass blurs. These work on
+// linear-light, premultiplied float buffers: the Prefilter technique converts
+// the pipeline texture into that form, and encode_output() converts back to
+// the pipeline's encoding (sRGB for SDR, linear for float/HDR), dithered.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 uv_size;          // pipeline size, px
+uniform float srgb_input = 1.0;  // pipeline holds sRGB-encoded values
+uniform float dither_step = 0.0; // one output step, 0 = none
+
+sampler_state linearSampler {
+	Filter = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	MinLOD = 0;
+	MaxLOD = 0;
+};
+
+sampler_state pointSampler {
+	Filter = Point;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	MinLOD = 0;
+	MaxLOD = 0;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv : TEXCOORD0;
+};
+
+VertData mainTransform(VertData v_in)
+{
+	v_in.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	return v_in;
+}
+
+float srgb_to_linear1(float c)
+{
+	return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+}
+
+float linear_to_srgb1(float c)
+{
+	return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+}
+
+float3 srgb_to_linear3(float3 c)
+{
+	return float3(srgb_to_linear1(c.r), srgb_to_linear1(c.g), srgb_to_linear1(c.b));
+}
+
+float3 linear_to_srgb3(float3 c)
+{
+	c = max(c, float3(0.0, 0.0, 0.0));
+	return float3(linear_to_srgb1(c.r), linear_to_srgb1(c.g), linear_to_srgb1(c.b));
+}
+
+float lens_luma(float3 c)
+{
+	return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
+
+// Interleaved gradient noise in [0, 1).
+float ign(float2 p)
+{
+	return frac(52.9829189 * frac(0.06711056 * p.x + 0.00583715 * p.y));
+}
+
+// Triangular noise in [-1, 1].
+float tpdf(float2 p)
+{
+	return ign(p) + ign(p * 1.37 + float2(47.3, 13.9)) - 1.0;
+}
+
+// Pipeline pixel (straight alpha, encoded) -> linear premultiplied.
+float4 to_linear_premul(float4 c)
+{
+	float3 rgb = srgb_input > 0.5 ? srgb_to_linear3(saturate(c.rgb)) : c.rgb;
+	return float4(rgb * c.a, c.a);
+}
+
+// Linear straight-alpha color -> pipeline encoding, dithered.
+float4 encode_output(float3 rgb, float a, float2 uv)
+{
+	float4 c = float4(srgb_input > 0.5 ? linear_to_srgb3(rgb) : rgb, a);
+	if (dither_step > 0.0) {
+		float2 p = floor(uv * uv_size);
+		c.r += tpdf(p) * dither_step;
+		c.g += tpdf(p + float2(19.0, 7.0)) * dither_step;
+		c.b += tpdf(p + float2(3.0, 23.0)) * dither_step;
+		c.a += tpdf(p + float2(29.0, 11.0)) * dither_step;
+	}
+	if (srgb_input > 0.5)
+		c = saturate(c);
+	else
+		c.a = saturate(c.a);
+	return c;
+}
+
+// Linear premultiplied -> pipeline encoding.
+float4 encode_premul(float4 p, float2 uv)
+{
+	float3 rgb = p.a > 0.00001 ? p.rgb / p.a : float3(0.0, 0.0, 0.0);
+	return encode_output(rgb, p.a, uv);
+}
+
+float4 PSPrefilter(VertData v_in) : TARGET
+{
+	return to_linear_premul(image.SampleLevel(pointSampler, v_in.uv, 0.0));
+}
+
+technique Prefilter
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSPrefilter(v_in);
+	}
+}

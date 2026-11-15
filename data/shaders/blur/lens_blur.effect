@@ -1,0 +1,268 @@
+// Lens (bokeh) blur and depth-of-field blur.
+//
+// Gather-based: every output pixel averages samples laid out over the lens
+// aperture (circle or N-blade polygon) by a golden-angle spiral. The sample
+// offsets come from kernel_tex (one RGBA32F texel per sample: xy = offset in
+// units of the radius, z = spiral radius in [0,1], w = area weight for the
+// polygon mapping), built on the CPU when the aperture changes.
+//
+// Depth mode is a variable-radius gather: each pixel's circle of confusion
+// (CoC) comes from a depth map; a sample contributes when its own CoC reaches
+// the pixel, and samples behind a sharper pixel are clamped to that pixel's
+// CoC so blurry background never bleeds over an in-focus foreground. A tiled
+// max-CoC buffer sets each pixel's gather extent. With the effect mask as the
+// map there is no depth order, so each pixel simply gathers its own disc.
+//
+// Taps spaced wider than a pixel read 2x/4x downsampled levels so small
+// highlights aren't missed between taps.
+
+#include "linear_common.effect"
+
+#define MAX_SAMPLES 320
+
+uniform texture2d kernel_tex;
+uniform texture2d coc_tex;
+uniform texture2d tile_tex;
+uniform texture2d depth_tex;
+
+uniform float radius = 10.0;       // px (max radius in depth mode)
+uniform float sample_count = 80.0; // texels in kernel_tex
+uniform float hl_threshold = 1.0;  // linear luminance
+uniform float hl_gain = 0.0;
+
+// Depth map
+uniform float depth_channel = 0.0; // 0 luminance, 1 alpha, 2 effect mask
+uniform float depth_invert = 0.0;
+uniform float focus_distance = 1.0;
+uniform float focus_range = 0.1;
+uniform float focus_falloff = 0.5;
+uniform float focus_use_point = 0.0;
+uniform float2 focus_point;
+uniform float2 tile_count;       // tiles in tile_tex
+uniform float2 tile_uv_scale;    // pipeline uv -> tile_tex uv
+
+uniform texture2d image_half;    // linear image downsampled 2x
+uniform texture2d image_quarter; // linear image downsampled 4x
+
+// Converts to linear premultiplied with the highlight boost: clipped
+// highlights get back (some of) the intensity a real light would have, so a
+// small bright point spreads into a visible bokeh disc instead of fading out.
+float4 PSPrefilterBoost(VertData v_in) : TARGET
+{
+	float4 c = to_linear_premul(image.SampleLevel(pointSampler, v_in.uv, 0.0));
+	if (hl_gain > 0.0 && c.a > 0.0) {
+		float lum = lens_luma(c.rgb / c.a);
+		float t = saturate((lum - hl_threshold) / max(1.0 - hl_threshold, 0.02));
+		c.rgb *= 1.0 + hl_gain * t * t;
+	}
+	return c;
+}
+
+uniform float2 src_texel; // 1 / size of the level being downsampled
+
+// 2x downsample with a 4x4 tent footprint (four bilinear taps). The overlap
+// keeps the coarse levels smooth, so taps reading them between texels don't
+// pick up a grid pattern.
+float4 PSDown(VertData v_in) : TARGET
+{
+	return (image.SampleLevel(linearSampler, v_in.uv + float2(-1.0, -1.0) * src_texel, 0.0) +
+		image.SampleLevel(linearSampler, v_in.uv + float2(1.0, -1.0) * src_texel, 0.0) +
+		image.SampleLevel(linearSampler, v_in.uv + float2(-1.0, 1.0) * src_texel, 0.0) +
+		image.SampleLevel(linearSampler, v_in.uv + float2(1.0, 1.0) * src_texel, 0.0)) *
+	       0.25;
+}
+
+// Taps further apart than about a pixel read a pre-averaged level, so small
+// details aren't skipped between taps (which shows as stippled discs).
+float4 sample_level(float level, float2 uv)
+{
+	if (level > 1.5)
+		return image_quarter.SampleLevel(linearSampler, uv, 0.0);
+	if (level > 0.5)
+		return image_half.SampleLevel(linearSampler, uv, 0.0);
+	return image.SampleLevel(linearSampler, uv, 0.0);
+}
+
+float4 gather(float2 uv, bool depth)
+{
+	float2 texel = 1.0 / uv_size;
+	float4 c0 = image.SampleLevel(pointSampler, uv, 0.0);
+	float R = radius;
+	float cc = 0.0;
+	float cz = 0.0;
+	// With the effect mask as the map there is no depth order: each pixel
+	// just averages its own disc (a smooth variable-radius blur).
+	bool scatter = depth && depth_channel < 1.5;
+	if (depth) {
+		float2 cd = coc_tex.SampleLevel(pointSampler, uv, 0.0).xy;
+		cc = cd.x * radius;
+		cz = cd.y;
+		R = scatter ? tile_tex.SampleLevel(pointSampler, uv * tile_uv_scale, 0.0).x * radius : cc;
+	}
+	if (R < 0.5)
+		return c0;
+
+	// Average distance between taps, px.
+	float spacing = R * sqrt(3.14159265 / sample_count);
+	float level = spacing > 2.0 ? 2.0 : (spacing > 1.0 ? 1.0 : 0.0);
+
+	// The center sample covers itself. It only carries weight where the
+	// pixel is (nearly) in focus and no tap may reach it; elsewhere it would
+	// double the density of the innermost tap and leave a hot spot in the
+	// middle of every bright disc.
+	float w0 = depth ? saturate(1.0 - cc * 0.5) + 0.0001 : 0.0001;
+	float4 acc = (depth ? c0 : sample_level(level, uv)) * w0;
+	float acc_w = w0;
+
+	for (int i = 0; i < MAX_SAMPLES; i++) {
+		if (float(i) >= sample_count)
+			break;
+		float4 k = kernel_tex.SampleLevel(pointSampler, float2((float(i) + 0.5) / sample_count, 0.5), 0.0);
+		float2 suv = uv + k.xy * R * texel;
+		float w = k.w;
+		if (scatter) {
+			float2 sd = coc_tex.SampleLevel(pointSampler, suv, 0.0).xy;
+			float sc = sd.x * radius;
+			if (sd.y > cz)
+				sc = min(sc, cc);
+			w *= saturate(sc - k.z * R + 1.0);
+		}
+		if (w > 0.0) {
+			acc += sample_level(level, suv) * w;
+			acc_w += w;
+		}
+	}
+
+	return acc / acc_w;
+}
+
+// Boosted highlights can exceed 1. SDR output scales them back keeping the
+// hue, so colored lights stay colored instead of clipping to white.
+float4 finish(float4 p, float2 uv)
+{
+	float3 rgb = p.a > 0.00001 ? p.rgb / p.a : float3(0.0, 0.0, 0.0);
+	if (srgb_input > 0.5)
+		rgb /= max(max(max(rgb.r, rgb.g), rgb.b), 1.0);
+	return encode_output(rgb, p.a, uv);
+}
+
+float4 PSGather(VertData v_in) : TARGET
+{
+	return finish(gather(v_in.uv, false), v_in.uv);
+}
+
+float4 PSGatherDepth(VertData v_in) : TARGET
+{
+	return finish(gather(v_in.uv, true), v_in.uv);
+}
+
+float depth_value(float2 uv)
+{
+	float4 d = depth_tex.SampleLevel(linearSampler, uv, 0.0);
+	float v = depth_channel > 1.5 ? d.r : (depth_channel > 0.5 ? d.a : lens_luma(d.rgb));
+	return depth_invert > 0.5 ? 1.0 - v : v;
+}
+
+// x = blur amount (CoC / max radius), y = distance from camera (larger is
+// farther). For luminance/alpha maps white (opaque) is near; the effect mask
+// is used directly as the blur amount.
+float4 PSCoc(VertData v_in) : TARGET
+{
+	float v = depth_value(v_in.uv);
+	if (depth_channel > 1.5)
+		return float4(saturate(v), v, 0.0, 1.0);
+	float f = focus_use_point > 0.5 ? depth_value(focus_point) : focus_distance;
+	float amount = saturate((abs(v - f) - focus_range * 0.5) / max(focus_falloff, 0.001));
+	return float4(amount, 1.0 - v, 0.0, 1.0);
+}
+
+// Max CoC over each 16x16 tile.
+float4 PSTileMax(VertData v_in) : TARGET
+{
+	float2 tile = floor(v_in.uv * tile_count);
+	float2 texel = 1.0 / uv_size;
+	float m = 0.0;
+	for (int y = 0; y < 16; y++) {
+		for (int x = 0; x < 16; x++) {
+			float2 p = (tile * 16.0 + float2(float(x), float(y)) + 0.5) * texel;
+			m = max(m, image.SampleLevel(pointSampler, p, 0.0).x);
+		}
+	}
+	return float4(m, 0.0, 0.0, 1.0);
+}
+
+// 3x3 max over tiles, so gathers reach blur from neighbouring tiles.
+float4 PSTileDilate(VertData v_in) : TARGET
+{
+	float2 texel = 1.0 / tile_count;
+	float m = 0.0;
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			m = max(m, image.SampleLevel(pointSampler, v_in.uv + float2(float(x), float(y)) * texel, 0.0).x);
+		}
+	}
+	return float4(m, 0.0, 0.0, 1.0);
+}
+
+technique PrefilterBoost
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSPrefilterBoost(v_in);
+	}
+}
+
+technique Down
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSDown(v_in);
+	}
+}
+
+technique Gather
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSGather(v_in);
+	}
+}
+
+technique GatherDepth
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSGatherDepth(v_in);
+	}
+}
+
+technique Coc
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSCoc(v_in);
+	}
+}
+
+technique TileMax
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSTileMax(v_in);
+	}
+}
+
+technique TileDilate
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSTileDilate(v_in);
+	}
+}
