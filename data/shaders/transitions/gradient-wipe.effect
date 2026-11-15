@@ -1,0 +1,107 @@
+// Spectrum Gradient Wipe: a soft wipe along a direction, out from a line,
+// or around a point (clock), with an optional edge glow from a color or a
+// gradient.
+#include "transition-common.effect"
+
+uniform int gw_type; // 1 linear, 2 split, 3 clock
+uniform float gw_angle = 0.0;     // degrees
+uniform float gw_center_x = 50.0; // %
+uniform float gw_center_y = 50.0; // %
+uniform float gw_softness = 120.0; // px
+uniform bool gw_reverse;
+
+float max_corner_proj(float2 c, float2 dir)
+{
+	float a = abs(dot(float2(0.0, 0.0) - c, dir));
+	float b = abs(dot(float2(uv_size.x, 0.0) - c, dir));
+	float d = abs(dot(float2(0.0, uv_size.y) - c, dir));
+	float e = abs(dot(uv_size - c, dir));
+	return max(max(a, b), max(d, e));
+}
+
+float max_corner_dist(float2 c)
+{
+	float a = length(c);
+	float b = length(float2(uv_size.x, 0.0) - c);
+	float d = length(float2(0.0, uv_size.y) - c);
+	float e = length(uv_size - c);
+	return max(max(a, b), max(d, e));
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	float2 pix = uv * uv_size;
+	float ang = radians(gw_angle);
+	float2 dir = float2(cos(ang), sin(ang));
+	float2 c = float2(gw_center_x, gw_center_y) * 0.01 * uv_size;
+
+	float4 a = tr_a(uv);
+	float4 b = tr_b(uv);
+
+	float q;
+	float len; // px per unit of q
+	if (gw_type == 3) {
+		float2 v = pix - c;
+		len = TAU * max_corner_dist(c);
+		q = frac((atan2(v.y, v.x) - ang) / TAU);
+	} else if (gw_type == 2) {
+		len = max(max_corner_proj(c, dir), 1.0);
+		q = abs(dot(pix - c, dir)) / len;
+	} else {
+		len = max(abs(uv_size.x * dir.x) + abs(uv_size.y * dir.y), 1.0);
+		q = dot(pix - 0.5 * uv_size, dir) / len + 0.5;
+	}
+	if (gw_reverse)
+		q = 1.0 - q;
+
+	float soft = gw_softness / len;
+	float e = tr_edge_width / len;
+	float aa = 1.0 / len;
+	float m = tr_margin(soft, e, aa);
+	float f = tr_front(m);
+
+	float w;
+	float d = q - f; // A side positive
+	float fade = 1.0;
+	if (gw_type == 3) {
+		// Anti-aliasing is in pixels around the point: one pixel is a
+		// wider angle close to it.
+		float2 v = pix - c;
+		float r = max(length(v), 0.5);
+		float aa_px = 1.0 / (TAU * r);
+		w = tr_cover(q, f, soft, aa_px);
+		// The start line of the sweep: blend with the coverage across it.
+		float seam = r * sin(q * TAU);
+		if (abs(seam) < 1.0 && (q < 0.25 || q > 0.75)) {
+			float other = tr_cover(q < 0.5 ? 1.0 : 0.0, f, soft, aa_px);
+			float own = saturate(0.5 + abs(seam));
+			w = w * own + other * (1.0 - own);
+		}
+		// The glow is measured in pixels along the arc; fade it in and
+		// out, as it would otherwise linger at the center.
+		d *= TAU * r;
+		e = tr_edge_width;
+		aa = 1.0;
+		fade = saturate(min(progress, 1.0 - progress) * 12.0);
+	} else {
+		w = tr_cover(q, f, soft, aa);
+	}
+	if (progress <= 0.0)
+		w = 0.0;
+	else if (progress >= 1.0)
+		w = 1.0;
+
+	float4 col = tr_mix(a, b, w);
+	col = tr_apply_edge(col, d, e, aa, fade);
+	return tr_output(col, uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDraw(v_in);
+	}
+}

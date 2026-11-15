@@ -1,0 +1,103 @@
+// Shared code for Spectrum's transitions (see
+// src/transitions/transition-common.h). The scenes are sampled in linear
+// light with premultiplied alpha; the shaders output linear, premultiplied
+// color and the sRGB framebuffer encodes it.
+#include "../fx/fx-common.effect"
+
+uniform texture2d tex_a;
+uniform texture2d tex_b;
+uniform float progress = 0.0;     // eased
+uniform float raw_progress = 0.0; // linear
+
+// Edge glow / border (tr_add_edge_properties()).
+uniform int tr_edge_mode;  // 0 none, 1 color, 2 gradient
+uniform int tr_edge_style; // 1 glow (added light), 2 solid band
+uniform float4 tr_edge_color;
+uniform float tr_edge_width = 0.0;
+uniform float tr_edge_intensity = 100.0;
+
+float4 tr_a(float2 uv)
+{
+	return tex_a.Sample(textureSampler, uv);
+}
+
+float4 tr_b(float2 uv)
+{
+	return tex_b.Sample(textureSampler, uv);
+}
+
+// Dithers linear, premultiplied color to the output bit depth. Values
+// above 1 (HDR) are kept.
+float4 tr_output(float4 c, float2 uv)
+{
+	if (dither_step > 0.0) {
+		float2 p = floor(uv * uv_size);
+		float a = max(c.a, 1e-6);
+		float3 enc = linear_to_srgb(max(c.rgb / a, float3(0.0, 0.0, 0.0)));
+		enc.r += tpdf(p) * dither_step;
+		enc.g += tpdf(p + float2(19.0, 7.0)) * dither_step;
+		enc.b += tpdf(p + float2(3.0, 23.0)) * dither_step;
+		c.rgb = srgb_to_linear(max(enc, float3(0.0, 0.0, 0.0))) * a;
+		c.a = saturate(c.a + tpdf(p + float2(29.0, 11.0)) * dither_step * step(c.a, 0.999));
+	}
+	return c;
+}
+
+// The pixel blend between the scenes: `w` is how much of B shows.
+float4 tr_mix(float4 a, float4 b, float w)
+{
+	return lerp(a, b, saturate(w));
+}
+
+// Adds the edge glow or border to `c`. `d` is the signed distance from the
+// transition front (negative on the B side, positive on the A side), `e`
+// the edge width and `aa` one pixel, all in the same units.
+float4 tr_apply_edge(float4 c, float d, float e, float aa, float fade)
+{
+	if (tr_edge_mode == 0 || e <= 0.0 || tr_edge_intensity <= 0.0)
+		return c;
+	float4 col;
+	if (tr_edge_mode == 2)
+		col = gradient_sample(saturate(0.5 + 0.5 * d / e));
+	else
+		col = tr_edge_color;
+	float3 lin = srgb_to_linear(saturate(col.rgb));
+	float k = tr_edge_intensity / 100.0 * fade;
+	if (tr_edge_style == 2) {
+		// A solid band of width e centered on the front.
+		float w = saturate((0.5 * e - abs(d)) / max(aa, 1e-6) + 0.5) * col.a * saturate(k);
+		return lerp(c, float4(lin, 1.0), w);
+	}
+	// Glow: light added around the front, falling off smoothly.
+	float x = d / e;
+	float w = exp(-4.0 * x * x) * col.a * k;
+	c.rgb += lin * w;
+	c.a = saturate(c.a + saturate(w) * (1.0 - c.a));
+	return c;
+}
+
+// Margin (in progress units) the front travels beyond each end, so the
+// soft edge and the edge glow have fully left the frame at 0 and 1.
+float tr_margin(float soft, float e, float aa)
+{
+	float m = 0.5 * max(soft, aa);
+	if (tr_edge_mode != 0 && tr_edge_intensity > 0.0)
+		m = max(m, tr_edge_style == 2 ? 0.5 * e + aa : 1.5 * e);
+	return m;
+}
+
+// Where the front is for `progress`, for a value q in [0, 1] that the front
+// sweeps from 0 to 1.
+float tr_front(float m)
+{
+	return lerp(-m, 1.0 + m, progress);
+}
+
+// B coverage for the value q against front f, with a soft edge `soft`
+// (smoothstep) and anti-aliasing width aa.
+float tr_cover(float q, float f, float soft, float aa)
+{
+	float s = max(soft, aa);
+	float x = saturate((f - q) / s + 0.5);
+	return x * x * (3.0 - 2.0 * x);
+}

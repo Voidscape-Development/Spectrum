@@ -180,4 +180,17 @@ target_sources(
     src/animate/animate-filter.c
 )
 
+# Transitions
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/transitions/transition-common.c
+    src/transitions/transition-common.h
+    src/transitions/gradient-wipe.c
+    src/transitions/shape-wipe.c
+    src/transitions/luma-wipe.c
+    src/transitions/blur-dissolve.c
+    src/transitions/effect-transitions.c
+)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

@@ -64,8 +64,19 @@ Exposure, temperature/tint, contrast, saturation and vibrance, levels, master an
 ### Spectrum Animate (filter)
 Drives any numeric setting of any filter on a source, or of the source itself, from a looping waveform (sine, triangle, ramps, square, smooth random) or from the level of an audio source with attack and release. It works with OBS's built-in filters and with other plugins too.
 
+### Spectrum transitions
+Scene transitions that blend in linear light, dither their output, keep HDR values, and crossfade the audio. Each has an easing setting (linear, smooth, ease in-out, ease in, ease out).
+
+- **Gradient Wipe:** a soft linear, split or clock wipe at any angle, with an edge glow or border filled with a color or a gradient.
+- **Shape Wipe:** an iris that opens or closes through a circle, rectangle, diamond, star, heart or polygon, around any center. It can rotate, spin while it grows, and stretch to the frame, with a soft edge and a glow or border.
+- **Luma Wipe:** wipes through the brightness of any image (OBS's own luma wipe images work), any source (animated ones too) or built-in clouds, with softness, contrast, invert and an edge glow.
+- **Blur Dissolve:** blurs the old scene out and the new one in, crossfading at the peak (a float Gaussian at reduced resolution, so wide blurs stay cheap).
+- **Glitch:** blocky displacement, torn rows, RGB split, noise and scanlines that peak in the middle while blocks switch to the new scene.
+- **Pixelate:** the pixels grow to a peak, then resolve into the new scene.
+- **Noise Dissolve:** the new scene burns through animated noise with a glowing edge (a fire gradient by default), optionally travelling in one direction.
+
 ### Presets, transitions and performance
-- **Presets:** every Spectrum filter and source can save, load and delete named presets.
+- **Presets:** every Spectrum filter, source and transition can save, load and delete named presets.
 - **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, shape rotation and shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, and the light ray, flare and point light positions. Changes show live, and Cancel restores the previous values.
 - **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort and Stylize filters interpolate between two filter states.
 - **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame.
