@@ -165,9 +165,9 @@ void CurveView::paintEvent(QPaintEvent *)
 	const QRectF r = plotRect();
 	const QColor text = pal.color(QPalette::Text);
 	QColor grid = text;
-	grid.setAlphaF(0.15);
+	grid.setAlphaF(0.15f);
 	QColor faint = text;
-	faint.setAlphaF(0.5);
+	faint.setAlphaF(0.5f);
 
 	p.fillRect(rect(), pal.color(QPalette::Base));
 
