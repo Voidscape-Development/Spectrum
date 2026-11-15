@@ -67,6 +67,15 @@ extern struct obs_source_info spectrum_text_source;
 /* Retro */
 extern struct obs_source_info spectrum_retro_filter;
 
+/* Transitions */
+extern struct obs_source_info spectrum_gradient_wipe_transition;
+extern struct obs_source_info spectrum_shape_wipe_transition;
+extern struct obs_source_info spectrum_luma_wipe_transition;
+extern struct obs_source_info spectrum_blur_dissolve_transition;
+extern struct obs_source_info spectrum_glitch_transition;
+extern struct obs_source_info spectrum_pixelate_transition;
+extern struct obs_source_info spectrum_noise_dissolve_transition;
+
 #include "common/fx-filter.h"
 
 // Registers a filter built on the fx framework, which supports Move
@@ -129,6 +138,14 @@ bool obs_module_load(void)
 	obs_register_source(&spectrum_text_source);
 
 	register_fx_filter(&spectrum_retro_filter);
+
+	obs_register_source(&spectrum_gradient_wipe_transition);
+	obs_register_source(&spectrum_shape_wipe_transition);
+	obs_register_source(&spectrum_luma_wipe_transition);
+	obs_register_source(&spectrum_blur_dissolve_transition);
+	obs_register_source(&spectrum_glitch_transition);
+	obs_register_source(&spectrum_pixelate_transition);
+	obs_register_source(&spectrum_noise_dissolve_transition);
 
 	obs_log(LOG_INFO, "loaded version %s", PLUGIN_VERSION);
 	return true;

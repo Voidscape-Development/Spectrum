@@ -1,0 +1,74 @@
+// Spectrum Noise Dissolve: the incoming scene burns through animated noise,
+// with a glowing edge (by default a fire gradient).
+#include "transition-common.effect"
+
+uniform float nd_scale = 120.0;   // px
+uniform int nd_detail;            // octaves
+uniform float nd_softness = 2.0;  // %
+uniform float nd_evolve = 0.5;    // noise motion, per second
+uniform float nd_seed = 0.0;
+uniform float nd_bias = 0.0;      // %, how much a direction leads the burn
+uniform float nd_angle = 0.0;     // degrees
+
+float fbm(float2 p, int octaves)
+{
+	float sum = 0.0;
+	float amp = 0.5;
+	float norm = 0.0;
+	for (int i = 0; i < 8; i++) {
+		if (i >= octaves)
+			break;
+		sum += value_noise(p) * amp;
+		norm += amp;
+		p = float2(p.x * 1.6 - p.y * 1.2, p.x * 1.2 + p.y * 1.6) + float2(3.1, 7.7);
+		amp *= 0.5;
+	}
+	return sum / max(norm, 1e-4);
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	float2 pix = uv * uv_size;
+	int octaves = clamp(nd_detail, 1, 8);
+	float t = time * nd_evolve;
+	float2 p = pix / max(nd_scale, 1.0) + float2(nd_seed * 17.31, nd_seed * 5.77);
+	// Two layers drifting against each other, so the pattern evolves
+	// rather than just scrolling.
+	float n = 0.5 * (fbm(p + float2(t, -0.6 * t), octaves) + fbm(p * 1.13 + float2(-0.7 * t, 0.9 * t) + 31.0, octaves));
+	// Spread the bell-shaped distribution over most of [0, 1].
+	float q = saturate((n - 0.5) * 3.2 + 0.5);
+
+	if (nd_bias > 0.0) {
+		float ang = radians(nd_angle);
+		float2 dir = float2(cos(ang), sin(ang));
+		float len = max(abs(uv_size.x * dir.x) + abs(uv_size.y * dir.y), 1.0);
+		float ramp = dot(pix - 0.5 * uv_size, dir) / len + 0.5;
+		q = lerp(q, ramp, saturate(nd_bias / 100.0));
+	}
+
+	float soft = nd_softness / 100.0;
+	float e = tr_edge_width / 100.0;
+	float m = tr_margin(soft, e, 1.0 / 255.0);
+	float f = tr_front(m);
+	float aa = max(fwidth(q), 1.0 / 1024.0);
+
+	float w = tr_cover(q, f, soft, aa);
+	if (progress <= 0.0)
+		w = 0.0;
+	else if (progress >= 1.0)
+		w = 1.0;
+
+	float4 col = tr_mix(tr_a(uv), tr_b(uv), w);
+	col = tr_apply_edge(col, q - f, e, aa, 1.0);
+	return tr_output(col, uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSDraw(v_in);
+	}
+}
