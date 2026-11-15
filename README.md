@@ -7,8 +7,11 @@ Spectrum is a collection of video filters and sources for OBS Studio. Everything
 ### Spectrum Blur (filter)
 Blur a source using one of several algorithms, then limit it with an effect mask.
 
-- **Algorithms:** Gaussian, Box, Dual Kawase, Pixelate and Temporal.
-- **Blur types:** Area, Directional, Zoom, Motion, Tilt-Shift and Vector, where the algorithm supports them.
+- **Algorithms:** Gaussian, Box, Dual Kawase, Pixelate, Temporal, Lens (Bokeh) and Frosted Glass.
+- **Blur types:** Area, Directional, Zoom, Motion, Tilt-Shift, Vector and Depth Map, where the algorithm supports them.
+- **Lens (Bokeh):** a camera-lens blur in linear light with a circle, hexagon, octagon or custom N-blade aperture (rotation, blade roundness), four quality levels, and a highlight boost that blooms bright spots into bokeh shapes (threshold and gain).
+- **Depth Map:** depth of field for the Lens algorithm. The blur radius varies per pixel with a depth map taken from a source's luminance or alpha (focus distance or a focus point, focus range, falloff, max radius; out-of-focus background doesn't bleed over a sharp foreground), or from the effect mask as a smooth variable blur.
+- **Frosted Glass:** a blur seen through textured glass: Frosted, Ribbed (reeded), Pebbled (bathroom) or Rippled, with grain size, scatter amount, texture angle and an optional tint.
 - **Pixelate shapes:** Square, Hexagonal, Circle, Triangle, Voronoi, Rhomboid and Triakis.
 - **Effect masks:** Crop, Rectangle, Circle, Source or Image.
 - **Background source:** pick another source to composite the blur with.
