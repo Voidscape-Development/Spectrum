@@ -62,7 +62,11 @@ Exposure, temperature/tint, contrast, saturation and vibrance, levels, master an
 - **Light:** bloom (a float blur pyramid), light rays, lens flare, and a point light that uses the source's alpha as a bump map.
 
 ### Spectrum Animate (filter)
-Drives any numeric setting of any filter on a source, or of the source itself, from a looping waveform (sine, triangle, ramps, square, smooth random) or from the level of an audio source with attack and release. It works with OBS's built-in filters and with other plugins too.
+Drives numeric settings of any filter on a source, or of the source itself. It works with OBS's built-in filters and with other plugins too.
+- **Drivers:** a waveform (sine, triangle, ramps, square, smooth random) with optional easing; keyframes; the level of an audio source with attack and release; the clock (seconds, minutes, hour of the day, day of the week/month, month); the mouse position across a screen; the brightness or the motion of another source; or another setting times a scale plus an offset (e.g. glow size = 2 x stroke width).
+- **Keyframes:** a list of time/value keyframes, each with how it eases in: linear, ease in/out/in-out, smooth, step, back, elastic or bounce. Edit them as text or in a curve editor with draggable keyframes.
+- **Playback and triggers:** waveforms and keyframes loop, ping-pong or play once. Start them automatically, with a hotkey, when the source is shown, or when it goes live; Play and Stop hotkeys are listed under the source. After a one-shot, hold the last value or return to the start.
+- **Several targets:** one Animate filter drives up to eight settings from the same driver, each with its own range and an offset to stagger them.
 
 ### Presets, transitions and performance
 - **Presets:** every Spectrum filter and source can save, load and delete named presets.

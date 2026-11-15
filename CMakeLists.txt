@@ -180,4 +180,16 @@ target_sources(
     src/animate/animate-filter.c
 )
 
+# Animate: keyframes, triggers, more drivers, several targets
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/animate/animate-cursor.cpp
+    src/animate/animate-ui.h
+    src/animate/curve-editor.cpp
+    src/animate/curve-editor.hpp
+    src/animate/keyframes.c
+    src/animate/keyframes.h
+)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
