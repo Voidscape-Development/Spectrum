@@ -28,6 +28,33 @@ uniform float4 corner_br;
 uniform int corner_space; // 0 sRGB, 1 linear sRGB, 2 Oklab
 uniform float corner_smooth;
 
+// Mesh: colors and tangents (value, d/du, d/dv, d2/dudv blocks of rows) in
+// corner_space, premultiplied.
+uniform texture2d mesh_data;
+uniform float2 mesh_dims; // columns, rows
+uniform float mesh_smooth;
+uniform texture2d mesh_image; // the rendered mesh: linear, straight alpha
+
+// Free points: colors in corner_space (premultiplied), positions in px.
+uniform float4 point_color0;
+uniform float4 point_color1;
+uniform float4 point_color2;
+uniform float4 point_color3;
+uniform float4 point_color4;
+uniform float4 point_color5;
+uniform float4 point_color6;
+uniform float4 point_color7;
+uniform float2 point_pos0;
+uniform float2 point_pos1;
+uniform float2 point_pos2;
+uniform float2 point_pos3;
+uniform float2 point_pos4;
+uniform float2 point_pos5;
+uniform float2 point_pos6;
+uniform float2 point_pos7;
+uniform int point_count;
+uniform float point_power;
+
 uniform float opacity;
 uniform float grain_amount;
 uniform float grain_size;
@@ -62,6 +89,8 @@ VertData VSDefault(VertData v_in)
 #define SHAPE_SPIRAL 6
 #define SHAPE_DIAMOND 7
 #define SHAPE_CORNERS 8
+#define SHAPE_MESH 9
+#define SHAPE_POINTS 10
 #define REPEAT_PAD 1
 #define REPEAT_REPEAT 2
 #define REPEAT_MIRROR 3
@@ -240,14 +269,10 @@ float4 gradient_color(float2 pix)
 	return c;
 }
 
-float4 corners_color(float2 uv)
+// A premultiplied color in corner_space to linear sRGB, straight alpha.
+float4 space_to_linear(float4 c)
 {
-	float2 k = saturate(uv);
-	if (corner_smooth > 0.5)
-		k = k * k * (3.0 - 2.0 * k);
-	float4 top = lerp(corner_tl, corner_tr, k.x);
-	float4 bottom = lerp(corner_bl, corner_br, k.x);
-	float4 c = lerp(top, bottom, k.y);
+	float a = saturate(c.a);
 	float3 v = c.a > 1e-6 ? c.rgb / c.a : float3(0.0, 0.0, 0.0);
 	float3 lin;
 	if (corner_space == 0)
@@ -256,15 +281,102 @@ float4 corners_color(float2 uv)
 		lin = v;
 	else
 		lin = oklab_to_linear(v);
-	return float4(saturate(lin), saturate(c.a));
+	return float4(saturate(lin), a);
 }
 
-// The finished color, sRGB encoded, straight alpha, before dithering.
-float4 shade(VertData v_in)
+float4 corners_color(float2 uv)
 {
-	float2 pix = v_in.uv * size;
-	float4 c = shape == SHAPE_CORNERS ? corners_color(v_in.uv) : gradient_color(pix);
+	float2 k = saturate(uv);
+	if (corner_smooth > 0.5)
+		k = k * k * (3.0 - 2.0 * k);
+	float4 top = lerp(corner_tl, corner_tr, k.x);
+	float4 bottom = lerp(corner_bl, corner_br, k.x);
+	return space_to_linear(lerp(top, bottom, k.y));
+}
 
+/* Mesh ------------------------------------------------------------------ */
+
+float4 mesh_fetch(float2 idx, float block)
+{
+	float2 uv = float2((idx.x + 0.5) / mesh_dims.x, (block * mesh_dims.y + idx.y + 0.5) / (mesh_dims.y * 4.0));
+	return mesh_data.Sample(pointSampler, uv);
+}
+
+// One corner's share of a bicubic Hermite patch: `b0` are the value basis
+// weights along u and v, `b1` the tangent basis weights.
+float4 mesh_corner(float2 idx, float2 b0, float2 b1)
+{
+	return b0.x * b0.y * mesh_fetch(idx, 0.0) + b1.x * b0.y * mesh_fetch(idx, 1.0) +
+	       b0.x * b1.y * mesh_fetch(idx, 2.0) + b1.x * b1.y * mesh_fetch(idx, 3.0);
+}
+
+// The mesh color at a parameter (grid units), evaluated in float per pixel.
+float4 mesh_color(float2 param)
+{
+	float2 p = clamp(param, float2(0.0, 0.0), mesh_dims - 1.0);
+	float2 i0 = min(floor(p), mesh_dims - 2.0);
+	float2 f = p - i0;
+	float2 h00, h01, h10, h11;
+	if (mesh_smooth > 0.5) {
+		float2 f2 = f * f;
+		float2 f3 = f2 * f;
+		h00 = 2.0 * f3 - 3.0 * f2 + 1.0;
+		h01 = -2.0 * f3 + 3.0 * f2;
+		h10 = f3 - 2.0 * f2 + f;
+		h11 = f3 - f2;
+	} else {
+		h00 = 1.0 - f;
+		h01 = f;
+		h10 = float2(0.0, 0.0);
+		h11 = float2(0.0, 0.0);
+	}
+	float4 c = mesh_corner(i0, h00, h10);
+	c += mesh_corner(i0 + float2(1.0, 0.0), float2(h01.x, h00.y), float2(h11.x, h10.y));
+	c += mesh_corner(i0 + float2(0.0, 1.0), float2(h00.x, h01.y), float2(h10.x, h11.y));
+	c += mesh_corner(i0 + float2(1.0, 1.0), h01, h11);
+	return space_to_linear(c);
+}
+
+/* Free points ------------------------------------------------------------ */
+
+float point_d2(float2 pix, float2 p, int i)
+{
+	float2 d = pix - p;
+	return i < point_count ? dot(d, d) : 1e30;
+}
+
+// Inverse distance weighting, normalised to the nearest point so the
+// weights stay in range at any power.
+float4 points_color(float2 pix)
+{
+	float d0 = point_d2(pix, point_pos0, 0);
+	float d1 = point_d2(pix, point_pos1, 1);
+	float d2 = point_d2(pix, point_pos2, 2);
+	float d3 = point_d2(pix, point_pos3, 3);
+	float d4 = point_d2(pix, point_pos4, 4);
+	float d5 = point_d2(pix, point_pos5, 5);
+	float d6 = point_d2(pix, point_pos6, 6);
+	float d7 = point_d2(pix, point_pos7, 7);
+	float dm = min(min(min(d0, d1), min(d2, d3)), min(min(d4, d5), min(d6, d7))) + 1.0;
+	float e = point_power * 0.5;
+	float w0 = pow(dm / (d0 + 1.0), e);
+	float w1 = pow(dm / (d1 + 1.0), e);
+	float w2 = pow(dm / (d2 + 1.0), e);
+	float w3 = pow(dm / (d3 + 1.0), e);
+	float w4 = pow(dm / (d4 + 1.0), e);
+	float w5 = pow(dm / (d5 + 1.0), e);
+	float w6 = pow(dm / (d6 + 1.0), e);
+	float w7 = pow(dm / (d7 + 1.0), e);
+	float4 c = w0 * point_color0 + w1 * point_color1 + w2 * point_color2 + w3 * point_color3 +
+		   w4 * point_color4 + w5 * point_color5 + w6 * point_color6 + w7 * point_color7;
+	float ws = w0 + w1 + w2 + w3 + w4 + w5 + w6 + w7;
+	return space_to_linear(c / max(ws, 1e-6));
+}
+
+// Hue shift, grain and opacity: the finished color, sRGB encoded, straight
+// alpha, before dithering.
+float4 finish(float4 c, float2 pix)
+{
 	if (hue_shift != 0.0) {
 		float3 lab = linear_to_oklab(c.rgb);
 		float cs = cos(hue_shift);
@@ -284,13 +396,25 @@ float4 shade(VertData v_in)
 	return float4(enc, c.a * opacity);
 }
 
+float4 shade(VertData v_in)
+{
+	float2 pix = v_in.uv * size;
+	float4 c;
+	if (shape == SHAPE_CORNERS)
+		c = corners_color(v_in.uv);
+	else if (shape == SHAPE_POINTS)
+		c = points_color(pix);
+	else
+		c = gradient_color(pix);
+	return finish(c, pix);
+}
+
 // Source output: linear, encoded by the sRGB framebuffer. Dithering happens
 // in encoded units so it lines up with the target's quantisation steps.
-float4 PSDraw(VertData v_in) : TARGET
+float4 output_draw(float4 c, float2 uv)
 {
-	float4 c = shade(v_in);
 	if (dither_step > 0.0) {
-		float2 p = floor(v_in.uv * size);
+		float2 p = floor(uv * size);
 		c.r += tpdf(p) * dither_step;
 		c.g += tpdf(p + float2(19.0, 7.0)) * dither_step;
 		c.b += tpdf(p + float2(3.0, 23.0)) * dither_step;
@@ -302,11 +426,55 @@ float4 PSDraw(VertData v_in) : TARGET
 
 // Fill texture for the stroke/glow/shadow shaders: sRGB encoded,
 // premultiplied in linear space, like a rendered fill source.
-float4 PSDrawFill(VertData v_in) : TARGET
+float4 output_fill(float4 c)
 {
-	float4 c = shade(v_in);
 	float3 lin = srgb_to_linear(c.rgb) * c.a;
 	return float4(linear_to_srgb(lin), c.a);
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	return output_draw(shade(v_in), v_in.uv);
+}
+
+float4 PSDrawFill(VertData v_in) : TARGET
+{
+	return output_fill(shade(v_in));
+}
+
+/* Mesh: the tessellated mesh (whose vertices carry the mesh parameter, in
+ * grid units) is first drawn into a float image of the output's size, so it
+ * is clipped to the output. That image then gets the usual finish. */
+
+struct MeshVert {
+	float4 pos   : POSITION;
+	float2 param : TEXCOORD0;
+};
+
+MeshVert VSMesh(MeshVert v_in)
+{
+	MeshVert vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.param = v_in.param;
+	return vert_out;
+}
+
+// Linear sRGB, straight alpha.
+float4 PSMeshColor(MeshVert v_in) : TARGET
+{
+	return mesh_color(v_in.param);
+}
+
+float4 PSDrawMeshImage(VertData v_in) : TARGET
+{
+	float4 c = mesh_image.Sample(pointSampler, v_in.uv);
+	return output_draw(finish(c, v_in.uv * size), v_in.uv);
+}
+
+float4 PSDrawMeshImageFill(VertData v_in) : TARGET
+{
+	float4 c = mesh_image.Sample(pointSampler, v_in.uv);
+	return output_fill(finish(c, v_in.uv * size));
 }
 
 technique Draw
@@ -324,5 +492,32 @@ technique DrawFill
 	{
 		vertex_shader = VSDefault(v_in);
 		pixel_shader  = PSDrawFill(v_in);
+	}
+}
+
+technique MeshColor
+{
+	pass
+	{
+		vertex_shader = VSMesh(v_in);
+		pixel_shader  = PSMeshColor(v_in);
+	}
+}
+
+technique DrawMeshImage
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDrawMeshImage(v_in);
+	}
+}
+
+technique DrawMeshImageFill
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDrawMeshImageFill(v_in);
 	}
 }

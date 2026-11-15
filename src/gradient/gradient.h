@@ -24,6 +24,11 @@ extern "C" {
 
 #define GRADIENT_MAX_STOPS 32
 #define GRADIENT_LUT_SIZE 2048
+// Mesh gradients: a grid of 2x2 up to 5x5 control points.
+#define GRADIENT_MESH_MAX 5
+#define GRADIENT_MESH_POINTS (GRADIENT_MESH_MAX * GRADIENT_MESH_MAX)
+// Free point gradients: 2 to 8 scattered color points.
+#define GRADIENT_POINTS_MAX 8
 
 enum gradient_shape {
 	GRADIENT_SHAPE_LINEAR = 1,
@@ -34,6 +39,8 @@ enum gradient_shape {
 	GRADIENT_SHAPE_SPIRAL,
 	GRADIENT_SHAPE_DIAMOND,
 	GRADIENT_SHAPE_CORNERS,
+	GRADIENT_SHAPE_MESH,   // smooth (bicubic) mesh of control points
+	GRADIENT_SHAPE_POINTS, // freely placed color points, blended softly
 };
 
 enum gradient_interp {
@@ -97,6 +104,19 @@ typedef struct gradient {
 	bool grain_animate;
 	bool dither;
 
+	// Mesh and free points. Positions are fractions of the size. Guarded
+	// by the mutex (written by update, read when rendering).
+	int mesh_cols, mesh_rows;
+	uint32_t mesh_colors[GRADIENT_MESH_POINTS]; // row major, stride GRADIENT_MESH_MAX
+	float mesh_pos[GRADIENT_MESH_POINTS][2];
+	int point_count;
+	uint32_t point_colors[GRADIENT_POINTS_MAX];
+	float point_pos[GRADIENT_POINTS_MAX][2];
+	float point_softness; // 0..1
+	float drift_amount;   // 0..1
+	float drift_speed;
+	float time_drift; // seconds, wrapped
+
 	// Animation state (graphics thread).
 	float time_rotate; // radians
 	float time_scroll;
@@ -115,6 +135,12 @@ typedef struct gradient {
 	gs_texture_t *lut_texture;
 	gs_effect_t *effect;
 	gs_texrender_t *fill_texrender;
+	gs_vertbuffer_t *mesh_vb;
+	gs_indexbuffer_t *mesh_ib;
+	gs_texture_t *mesh_tex;
+	gs_texrender_t *mesh_texrender;
+	int mesh_vb_cols, mesh_vb_rows;
+	uint64_t mesh_hash;
 } gradient_t;
 
 void gradient_init(gradient_t *g, obs_source_t *owner, const char *prefix);
@@ -174,6 +200,38 @@ void gradient_default_stops(struct gradient_stop *stops, size_t *count);
 // sorted.
 void gradient_bake(const struct gradient_stop *stops, size_t stop_count, enum gradient_interp interp, float *out,
 		   size_t count);
+
+/* Colors from Source: palette extraction (gradient-palette.c) ----------- */
+
+enum gradient_palette_order {
+	GRADIENT_PALETTE_LIGHTNESS = 1, // dark to light
+	GRADIENT_PALETTE_HUE,           // around the hue wheel, from its biggest gap
+	GRADIENT_PALETTE_PROMINENCE,    // most common first
+};
+
+// Renders `source` (scaled to at most `max_size` px on its long side) and
+// reads it back. Returns a bmalloc'ed tightly packed RGBA8 buffer (sRGB,
+// straight alpha) of *width x *height pixels, or NULL. Enters the graphics
+// context itself; must not be called from inside it.
+uint8_t *gradient_palette_capture(obs_source_t *source, uint32_t max_size, uint32_t *width, uint32_t *height);
+// Finds up to `max_colors` dominant colors of an RGBA8 image (k-means in
+// Oklab, ignoring transparent pixels), sorted by `order`. Writes OBS colors
+// and their share of the image (0..1, may be NULL). Returns the count.
+size_t gradient_palette_extract(const uint8_t *rgba, uint32_t width, uint32_t height, uint32_t linesize,
+				size_t max_colors, enum gradient_palette_order order, uint32_t *colors, float *weights);
+// Evenly spaced stops for a palette (at least 2). Returns the stop count.
+size_t gradient_palette_to_stops(const uint32_t *colors, size_t count, struct gradient_stop *stops, size_t max_stops);
+// Writes a palette into a gradient's settings: the stops, and the mesh or
+// point colors when the shape is a mesh or free points.
+void gradient_apply_palette(obs_data_t *settings, const char *prefix, const uint32_t *colors, size_t count);
+
+/* Position Picker support ----------------------------------------------- */
+
+// When `key` is a position setting of a gradient (center, angle, mesh or
+// free point), sets *visible to whether the gradient's current shape uses it
+// and returns true; `suffix` gets a label suffix (the point's number, or "").
+// Returns false for other keys.
+bool gradient_picker_handle(obs_data_t *settings, const char *key, bool *visible, char *suffix, size_t suffix_size);
 
 // Small color helpers, shared with the editor.
 float gradient_srgb_to_linear(float v);

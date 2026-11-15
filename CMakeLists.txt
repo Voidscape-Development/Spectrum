@@ -180,4 +180,12 @@ target_sources(
     src/animate/animate-filter.c
 )
 
+# Mesh gradients and Colors from Source
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/gradient/gradient-palette.c
+    src/gradient/gradient-palette-dialog.cpp
+)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

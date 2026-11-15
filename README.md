@@ -31,6 +31,10 @@ Each one is available as a filter on a source, or as a standalone source that dr
 A gradient source built to never band, with plenty of control.
 
 - **Shapes:** linear, reflected, radial (with a movable focal point), elliptical, conic, spiral, diamond and a free-form four-corner blend.
+- **Mesh gradients:** a grid of 2x2 up to 5x5 color points that you can move freely. Colors blend smoothly between the points as bicubic patches, evaluated in float per pixel in the chosen color space (Oklab by default). Turn off smooth blending for straight bilinear patches.
+- **Free color points:** 2 to 8 colors placed anywhere, with a softness control from near flat color areas to one wide, soft wash.
+- **Point drift:** mesh and color points can wander slowly for a living background. Mesh corners stay put and edge points slide along their edge, so the frame stays covered.
+- **Colors from Source:** the "Colors from Source..." button reads a frame of any source, finds its dominant colors (k-means in Oklab) and turns them into color stops, ordered dark to light, around the hue wheel or by how common they are. On a mesh or color point gradient it also recolors the points. The button is available everywhere the gradient settings appear: Stroke, Glow, Shadow, Shape, Noise, Gradient Map and Long Shadow.
 - **Color stops editor:** click to add stops, drag to move them, drag down to remove them, and drag the midpoint diamonds between stops. Each segment has its own easing (linear, smooth, ease in/out, step). Includes built-in presets, and you can save your own.
 - **Color blending:** Oklab (perceptual, the default), OkLCh hue paths (shorter, longer, increasing, decreasing), linear RGB or classic sRGB. Colors that would fall outside sRGB are brought back in by reducing chroma, not by clipping.
 - **Extend modes:** pad, repeat and mirror, with anti-aliased seams.
@@ -66,7 +70,7 @@ Drives any numeric setting of any filter on a source, or of the source itself, f
 
 ### Presets, transitions and performance
 - **Presets:** every Spectrum filter and source can save, load and delete named presets.
-- **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, shape rotation and shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, and the light ray, flare and point light positions. Changes show live, and Cancel restores the previous values.
+- **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, mesh and color points, shape rotation and shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, and the light ray, flare and point light positions. Changes show live, and Cancel restores the previous values.
 - **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort and Stylize filters interpolate between two filter states.
 - **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame.
 
