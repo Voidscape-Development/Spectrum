@@ -180,4 +180,7 @@ target_sources(
     src/animate/animate-filter.c
 )
 
+# Composite and Edge filters
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/composite.c src/fx/edge.c)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

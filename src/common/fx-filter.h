@@ -96,7 +96,8 @@ uint32_t fx_cb_height(void *data);
 void fx_add_size_properties(obs_properties_t *props);
 void fx_size_defaults(obs_data_t *settings);
 
-// A blend mode list matching blend_rgb() in fx-common.effect.
+// A blend mode list matching blend_rgb() in fx-common.effect: 26
+// Photoshop-style modes (the original nine keep their values).
 void fx_add_blend_list(obs_properties_t *props, const char *key);
 
 // Move Transition support for filters with their own pipeline: the

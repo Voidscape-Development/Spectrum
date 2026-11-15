@@ -441,17 +441,26 @@ void fx_size_defaults(obs_data_t *settings)
 
 void fx_add_blend_list(obs_properties_t *props, const char *key)
 {
+	// Values match blend_rgb() in fx-common.effect and are stored in
+	// settings: never renumber them. Listed in Photoshop's order.
+	static const struct {
+		const char *text;
+		int value;
+	} modes[] = {
+		{"Fx.Blend.Normal", 1},       {"Fx.Blend.Darken", 10},       {"Fx.Blend.Multiply", 2},
+		{"Fx.Blend.ColorBurn", 12},   {"Fx.Blend.LinearBurn", 14},   {"Fx.Blend.DarkerColor", 26},
+		{"Fx.Blend.Lighten", 11},     {"Fx.Blend.Screen", 3},        {"Fx.Blend.ColorDodge", 13},
+		{"Fx.Blend.LinearDodge", 6},  {"Fx.Blend.LighterColor", 25}, {"Fx.Blend.Overlay", 4},
+		{"Fx.Blend.SoftLight", 5},    {"Fx.Blend.HardLight", 15},    {"Fx.Blend.VividLight", 16},
+		{"Fx.Blend.LinearLight", 17}, {"Fx.Blend.PinLight", 18},     {"Fx.Blend.HardMix", 19},
+		{"Fx.Blend.Difference", 20},  {"Fx.Blend.Exclusion", 21},    {"Fx.Blend.Subtract", 22},
+		{"Fx.Blend.Divide", 23},      {"Fx.Blend.Hue", 9},           {"Fx.Blend.Saturation", 24},
+		{"Fx.Blend.Color", 7},        {"Fx.Blend.Luminosity", 8},
+	};
 	obs_property_t *p = obs_properties_add_list(props, key, obs_module_text("Fx.BlendMode"), OBS_COMBO_TYPE_LIST,
 						    OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(p, obs_module_text("Fx.Blend.Normal"), 1);
-	obs_property_list_add_int(p, obs_module_text("Fx.Blend.Multiply"), 2);
-	obs_property_list_add_int(p, obs_module_text("Fx.Blend.Screen"), 3);
-	obs_property_list_add_int(p, obs_module_text("Fx.Blend.Overlay"), 4);
-	obs_property_list_add_int(p, obs_module_text("Fx.Blend.SoftLight"), 5);
-	obs_property_list_add_int(p, obs_module_text("Fx.Blend.Add"), 6);
-	obs_property_list_add_int(p, obs_module_text("Fx.Blend.Color"), 7);
-	obs_property_list_add_int(p, obs_module_text("Fx.Blend.Luminosity"), 8);
-	obs_property_list_add_int(p, obs_module_text("Fx.Blend.Hue"), 9);
+	for (size_t i = 0; i < OBS_COUNTOF(modes); i++)
+		obs_property_list_add_int(p, obs_module_text(modes[i].text), modes[i].value);
 }
 
 /* ------------------------------------------------------------------------

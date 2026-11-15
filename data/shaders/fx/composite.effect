@@ -1,0 +1,129 @@
+// Spectrum Composite: blends a layer (another source or an image) onto the
+// filter input with a blend mode, opacity, placement and opacity mask.
+#include "fx-common.effect"
+
+uniform int cm_blend;
+uniform float cm_opacity = 100.0;  // %
+uniform int cm_placement;          // 1 stretch, 2 fit, 3 fill, 4 tile, 5 original
+uniform float cm_x = 50.0;         // % of the output, layer center
+uniform float cm_y = 50.0;
+uniform float cm_scale = 100.0;    // %
+uniform float cm_rotation = 0.0;   // degrees, clockwise
+uniform int cm_composite;          // 1 over, 2 inside the source's alpha
+uniform bool cm_swap;              // the layer goes below the source
+uniform bool cm_mask_invert;
+uniform bool cm_mask_layer;        // the mask follows the layer's placement
+
+// Rendered in float: linear light, premultiplied alpha.
+uniform texture2d layer_tex;
+uniform float layer_enabled = 0.0;
+uniform float2 layer_size;   // px on the output, before cm_scale
+uniform float2 layer_texels; // the layer texture's size
+uniform texture2d mask_tex;
+uniform int mask_mode;                    // 0 none, 1 luma, 2 alpha, 3 gradient
+
+// Output uv -> layer uv (0..1 inside the layer; outside unless tiled).
+float2 layer_uv(float2 uv)
+{
+	float2 d = uv * uv_size - float2(cm_x, cm_y) / 100.0 * uv_size;
+	float a = cm_rotation * PI / 180.0;
+	float cs = cos(a);
+	float sn = sin(a);
+	// Undo the clockwise (y down) rotation.
+	float2 r = float2(cs * d.x + sn * d.y, -sn * d.x + cs * d.y);
+	float s = max(cm_scale, 0.01) / 100.0;
+	return r / (layer_size * s) + 0.5;
+}
+
+// One sampler per texture (OpenGL binds a single sampler state to each
+// texture): tiles wrap by hand, clamped half a texel in so the border
+// color never bleeds into the seams.
+float4 layer_fetch(float2 luv)
+{
+	if (cm_placement == 4) {
+		float2 h = 0.5 / layer_texels;
+		luv = clamp(frac(luv), h, 1.0 - h);
+	}
+	return layer_tex.Sample(borderSampler, luv);
+}
+
+// Premultiplied linear layer, supersampled when it is drawn smaller than
+// its texture so downscaled layers don't alias.
+float4 layer_premul(float2 luv)
+{
+	float2 fw = fwidth(luv * layer_texels);
+	float foot = max(fw.x, fw.y);
+	if (foot <= 1.25)
+		return layer_fetch(luv);
+	float2 dx = ddx(luv) * 0.25;
+	float2 dy = ddy(luv) * 0.25;
+	return 0.25 * (layer_fetch(luv - dx - dy) + layer_fetch(luv + dx - dy) + layer_fetch(luv - dx + dy) +
+		       layer_fetch(luv + dx + dy));
+}
+
+// Premultiplied linear -> sRGB encoded, straight alpha.
+float4 unpremul_encode(float4 t)
+{
+	if (t.a <= 1e-5)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	return float4(linear_to_srgb(saturate(max(t.rgb, float3(0.0, 0.0, 0.0)) / t.a)), saturate(t.a));
+}
+
+float mask_value(float2 uv, float2 luv)
+{
+	if (mask_mode == 0)
+		return 1.0;
+	float2 muv = cm_mask_layer ? luv : uv;
+	if (cm_mask_layer && cm_placement == 4)
+		muv = frac(muv);
+	float4 t = mask_tex.Sample(borderSampler, muv);
+	float m;
+	if (mask_mode == 2) {
+		m = t.a;
+	} else if (mask_mode == 3) {
+		// Gradient fill: sRGB encoded, premultiplied in linear space.
+		float3 lin = srgb_to_linear(saturate(t.rgb));
+		float3 enc = t.a > 1e-5 ? linear_to_srgb(saturate(lin / t.a)) : float3(0.0, 0.0, 0.0);
+		m = luma(enc) * t.a;
+	} else {
+		m = luma(unpremul_encode(t).rgb) * t.a;
+	}
+	m = saturate(m);
+	return cm_mask_invert ? 1.0 - m : m;
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	float4 base = fx_input(uv);
+	if (layer_enabled < 0.5)
+		return fx_output(base, uv);
+
+	float2 luv = layer_uv(uv);
+	float4 lay = unpremul_encode(layer_premul(luv));
+	lay.a *= saturate(cm_opacity / 100.0) * mask_value(uv, luv);
+
+	float4 bot = cm_swap ? lay : base;
+	float4 top = cm_swap ? base : lay;
+
+	// W3C compositing: blend where both are present, then source-over.
+	float3 blended = lerp(top.rgb, blend_rgb(bot.rgb, top.rgb, cm_blend), bot.a);
+	float ao = top.a + bot.a * (1.0 - top.a);
+	float3 co = top.a * blended + (1.0 - top.a) * bot.a * bot.rgb;
+	float4 result = float4(ao > 1e-5 ? co / ao : base.rgb, ao);
+
+	// Inside: keep the source's own alpha (the layer only shows on it).
+	if (cm_composite == 2)
+		result = float4(ao > 1e-5 ? result.rgb : base.rgb, base.a);
+
+	return fx_output(result, uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}
