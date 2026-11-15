@@ -180,4 +180,12 @@ target_sources(
     src/animate/animate-filter.c
 )
 
+# Warp and Time FX
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/fx/warp.c
+    src/fx/time-fx.c
+)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

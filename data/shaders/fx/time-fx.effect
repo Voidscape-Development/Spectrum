@@ -1,0 +1,207 @@
+// Spectrum Time FX: echo, feedback trails, frame-delay ghost, slit-scan and
+// freeze (see src/fx/time-fx.c).
+//
+// Frames are 8-bit sRGB textures sampled as linear light (straight alpha).
+// Intermediate results are float, linear, premultiplied; the Output
+// techniques dither them back to the target.
+#include "fx-common.effect"
+
+uniform texture2d frame_a;    // current (or ring) frame, linear via sRGB view
+uniform texture2d frame_b;    // delayed frame
+uniform texture2d old_tex;    // feedback buffer, float premultiplied
+uniform texture2d result_tex; // float premultiplied result
+uniform float weight = 1.0;
+
+uniform float has_old = 0.0;
+uniform float4 fb_rot;        // 2x2, output px -> old px (rows)
+uniform float2 fb_offset;     // px per frame
+uniform float tf_fb_decay = 85.0; // %
+uniform int tf_fb_blend;      // 1 over, 2 lighten, 3 add, 4 screen
+
+uniform float tf_ghost_opacity = 50.0; // %
+uniform float4 tf_ghost_color;         // tint, sRGB
+uniform int tf_ghost_blend;            // 1 normal, 2 add, 3 screen, 4 difference, 5 multiply, 6 lighten
+
+uniform int tf_slit_map;      // 1 rows, 2 columns, 3 linear, 4 radial
+uniform bool tf_slit_invert;
+uniform float tf_slit_angle = 0.0;      // degrees
+uniform float tf_slit_center_x = 50.0;  // %
+uniform float tf_slit_center_y = 50.0;  // %
+uniform float tf_slit_radius = 100.0;   // % of the half diagonal
+uniform float slit_index = 0.0;  // frame age drawn by this pass
+uniform float slit_scale = 1.0;  // frames - 1
+uniform float slit_max = 0.0;    // oldest available age
+
+float4 premul(float4 c)
+{
+	return float4(c.rgb * c.a, c.a);
+}
+
+/* Echo ------------------------------------------------------------------ */
+
+float4 PSAccum(VertData v_in) : TARGET
+{
+	return premul(frame_a.Sample(textureSampler, v_in.uv)) * weight;
+}
+
+/* Feedback -------------------------------------------------------------- */
+
+float4 PSFeedback(VertData v_in) : TARGET
+{
+	float4 cur = premul(frame_a.Sample(textureSampler, v_in.uv));
+	if (has_old < 0.5)
+		return cur;
+	float2 c = uv_size * 0.5;
+	float2 p = v_in.uv * uv_size - c - fb_offset;
+	float2 q = float2(dot(fb_rot.xy, p), dot(fb_rot.zw, p)) + c;
+	float4 old = old_tex.Sample(borderSampler, q / uv_size) * (tf_fb_decay / 100.0);
+	// Drop what has faded below visibility, so trails end cleanly.
+	old = old.a < 1.0 / 512.0 ? float4(0.0, 0.0, 0.0, 0.0) : old;
+	if (tf_fb_blend == 2)
+		return max(cur, old);
+	if (tf_fb_blend == 3)
+		return min(cur + old, float4(1.0, 1.0, 1.0, 1.0));
+	if (tf_fb_blend == 4)
+		return cur + old - cur * old;
+	return cur + old * (1.0 - cur.a);
+}
+
+/* Ghost ----------------------------------------------------------------- */
+
+float3 ghost_blend(float3 a, float3 b)
+{
+	if (tf_ghost_blend == 2)
+		return saturate(a + b);
+	if (tf_ghost_blend == 3)
+		return 1.0 - (1.0 - a) * (1.0 - b);
+	if (tf_ghost_blend == 4)
+		return abs(a - b);
+	if (tf_ghost_blend == 5)
+		return a * b;
+	if (tf_ghost_blend == 6)
+		return max(a, b);
+	return b;
+}
+
+float4 PSGhost(VertData v_in) : TARGET
+{
+	float4 a = frame_a.Sample(textureSampler, v_in.uv);
+	float4 b = frame_b.Sample(textureSampler, v_in.uv);
+	// Blend in encoded sRGB, like the other Spectrum blend modes.
+	float3 ea = linear_to_srgb(a.rgb);
+	float3 eb = linear_to_srgb(b.rgb) * tf_ghost_color.rgb;
+	float ta = b.a * saturate(tf_ghost_opacity / 100.0);
+	float ba = a.a;
+	float ao = ta + ba - ta * ba;
+	if (ao <= 0.0)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	float3 co = ((1.0 - ta) * ba * ea + (1.0 - ba) * ta * eb + ta * ba * ghost_blend(ea, eb)) / ao;
+	return float4(srgb_to_linear(saturate(co)) * ao, ao);
+}
+
+/* Slit-scan ------------------------------------------------------------- */
+
+// 0 (newest) .. 1 (oldest) across the frame.
+float slit_coord(float2 uv)
+{
+	float f;
+	if (tf_slit_map == 2) {
+		f = uv.x;
+	} else if (tf_slit_map == 3) {
+		float a = tf_slit_angle * PI / 180.0;
+		float2 dir = float2(cos(a), sin(a));
+		float2 p = (uv - 0.5) * uv_size;
+		float half_len = 0.5 * (abs(dir.x) * uv_size.x + abs(dir.y) * uv_size.y);
+		f = 0.5 + dot(p, dir) / max(2.0 * half_len, 1.0);
+	} else if (tf_slit_map == 4) {
+		float2 c = float2(tf_slit_center_x, tf_slit_center_y) / 100.0 * uv_size;
+		float half_diag = 0.5 * length(uv_size);
+		f = length(uv * uv_size - c) / max(tf_slit_radius / 100.0 * half_diag, 1.0);
+	} else {
+		f = uv.y;
+	}
+	f = saturate(f);
+	return tf_slit_invert ? 1.0 - f : f;
+}
+
+float4 PSSlitAccum(VertData v_in) : TARGET
+{
+	float idx = min(slit_coord(v_in.uv) * slit_scale, slit_max);
+	// Hat weights: neighbouring frames cross-fade, so there are no steps.
+	float w = saturate(1.0 - abs(idx - slit_index));
+	if (w <= 0.0)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	return premul(frame_a.Sample(textureSampler, v_in.uv)) * w;
+}
+
+/* Output ---------------------------------------------------------------- */
+
+float4 PSOutputFloat(VertData v_in) : TARGET
+{
+	float4 c = result_tex.Sample(textureSampler, v_in.uv);
+	if (c.a <= 1e-5)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	float a = saturate(c.a);
+	float3 rgb = max(c.rgb / c.a, float3(0.0, 0.0, 0.0));
+	return fx_output(float4(linear_to_srgb(rgb), a), v_in.uv);
+}
+
+float4 PSOutputFrame(VertData v_in) : TARGET
+{
+	float4 c = frame_a.Sample(textureSampler, v_in.uv);
+	return fx_output(float4(linear_to_srgb(c.rgb), c.a), v_in.uv);
+}
+
+technique Accum
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSAccum(v_in);
+	}
+}
+
+technique Feedback
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSFeedback(v_in);
+	}
+}
+
+technique Ghost
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSGhost(v_in);
+	}
+}
+
+technique SlitAccum
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSSlitAccum(v_in);
+	}
+}
+
+technique OutputFloat
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSOutputFloat(v_in);
+	}
+}
+
+technique OutputFrame
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSOutputFrame(v_in);
+	}
+}

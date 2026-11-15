@@ -61,13 +61,36 @@ Exposure, temperature/tint, contrast, saturation and vibrance, levels, master an
 - **Stylize:** chromatic aberration, glitch, CRT curvature and scanlines, mono or CMYK halftone, posterize with optional ordered dither, film grain and vignette.
 - **Light:** bloom (a float blur pyramid), light rays, lens flare, and a point light that uses the source's alpha as a bump map.
 
+### Spectrum Warp (filter)
+Reshapes a source in 2D and 3D. Every mode maps output pixels back to the source, so edges stay anti-aliased and squeezed areas are averaged over each pixel's footprint instead of shimmering.
+
+- **Corner pin:** move the four corners anywhere; the mapping is a true perspective (projective) one, not a bilinear stretch.
+- **Mesh warp:** a 3x3 or 4x4 grid of control points, interpolated with smooth bicubic (Catmull-Rom) curves.
+- **Perspective tilt:** rotate the source in X, Y and Z with an adjustable field of view and zoom.
+- **Bend:** arc the source horizontally or vertically, up to a full circle.
+- **Page curl** and **roll:** peel the source back from a corner or edge, or roll it into a tube, with shading, a tinted back side and a soft shadow.
+- **Extra drawing area:** lets the result draw outside the source's original bounds.
+
+Corners and mesh points are offsets in pixels from where they start, so the defaults leave the source untouched at any size. The Position Picker has a handle for each corner and mesh point.
+
+### Spectrum Time FX (filter)
+Effects built from the source's recent frames.
+
+- **Echo:** blends up to 16 earlier frames, a set number of frames apart, fading with age.
+- **Feedback trails:** a float feedback buffer that fades each frame, with optional drift, scale and rotation per frame for tunnel and spiral trails, blended normally or with lighten, add or screen.
+- **Delayed ghost:** a delayed copy of the source at an opacity, with a tint and normal, add, screen, difference, multiply or lighten blending.
+- **Slit-scan:** each row, column, angled line or ring shows a different moment from a buffer of up to 240 frames, cross-faded between neighbouring frames so there are no steps.
+- **Freeze / strobe:** freeze and unfreeze with a hotkey or button, or hold every Nth frame for a strobe look.
+
+Past frames live in video memory: width x height x 4 bytes each (about 8 MB per frame at 1080p, 33 MB at 4K), capped at 240 frames or 1 GB. Everything is freed when the filter is disabled or its source is hidden, and the history restarts when the source changes size.
+
 ### Spectrum Animate (filter)
 Drives any numeric setting of any filter on a source, or of the source itself, from a looping waveform (sine, triangle, ramps, square, smooth random) or from the level of an audio source with attack and release. It works with OBS's built-in filters and with other plugins too.
 
 ### Presets, transitions and performance
 - **Presets:** every Spectrum filter and source can save, load and delete named presets.
-- **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, shape rotation and shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, and the light ray, flare and point light positions. Changes show live, and Cancel restores the previous values.
-- **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort and Stylize filters interpolate between two filter states.
+- **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, shape rotation and shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, the light ray, flare and point light positions, Warp's corner pin corners and mesh points, and the slit-scan center and direction. Changes show live, and Cancel restores the previous values.
+- **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort, Stylize and Warp filters interpolate between two filter states.
 - **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame.
 
 ## Building

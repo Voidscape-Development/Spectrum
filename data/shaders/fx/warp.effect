@@ -1,0 +1,313 @@
+// Spectrum Warp: corner pin, mesh warp, perspective tilt, bend, page curl
+// and roll (see src/fx/warp.c).
+//
+// Each mode maps an output pixel back to source pixels. The source is read
+// with a footprint filter sized from the mapping's derivatives (so squeezed
+// areas average instead of aliasing) and its edges are anti-aliased in
+// output pixels. Layers (the curl's front, back and flat parts) are
+// composited premultiplied, in the input's light (linear when OBS hands us
+// linear color).
+#include "fx-common.effect"
+
+uniform int wp_mode;
+uniform float2 src_size;          // px, the filter input
+uniform float4 hom0;              // inverse homography rows: output frame px
+uniform float4 hom1;              // -> homogeneous source px
+uniform float4 hom2;
+uniform float hom_valid = 0.0;
+uniform float backside = 0.0;     // the homography mirrors the source
+uniform float wp_bend_angle = 60.0; // degrees
+uniform int wp_bend_axis;          // 1 horizontal, 2 vertical
+uniform float2 curl_dir;           // unit, towards the lifted part
+uniform float curl_fold = 0.0;     // fold line, px along curl_dir
+uniform float wp_curl_radius = 40.0; // px
+uniform float wp_shading = 60.0;   // %
+uniform float wp_shadow = 50.0;    // %
+uniform float4 wp_back_color;      // sRGB, alpha = strength
+uniform bool wp_area_filter;
+uniform texture2d map_tex;         // mesh: source px per node (z: valid)
+uniform float2 map_nodes;
+
+#define MODE_CORNER_PIN 1
+#define MODE_MESH3 2
+#define MODE_MESH4 3
+#define MODE_TILT 4
+#define MODE_BEND 5
+#define MODE_PAGE_CURL 6
+#define MODE_ROLL 7
+
+/* Sampling ------------------------------------------------------------- */
+
+// Premultiplied, in the input's light.
+float4 tap(float2 s)
+{
+	float4 c = image.SampleLevel(textureSampler, s / src_size, 0.0);
+	return float4(c.rgb * c.a, c.a);
+}
+
+// Averages taps over the pixel's footprint in the source (dx, dy: source
+// px per output px) when it covers more than a texel.
+float4 sample_area(float2 s, float2 dx, float2 dy)
+{
+	// Discontinuities (layer seams) have huge derivatives: cap the
+	// footprint so they don't smear far.
+	float lx = length(dx);
+	float ly = length(dy);
+	dx *= min(1.0, 16.0 / max(lx, 1e-6));
+	dy *= min(1.0, 16.0 / max(ly, 1e-6));
+	if (!wp_area_filter || (lx <= 1.25 && ly <= 1.25))
+		return tap(s);
+	float nx = clamp(ceil(min(lx, 16.0) * 0.5), 1.0, 4.0);
+	float ny = clamp(ceil(min(ly, 16.0) * 0.5), 1.0, 4.0);
+	float4 sum = float4(0.0, 0.0, 0.0, 0.0);
+	for (int j = 0; j < 4; j++) {
+		for (int i = 0; i < 4; i++) {
+			if (float(i) < nx && float(j) < ny) {
+				float2 o = dx * ((float(i) + 0.5) / nx - 0.5) + dy * ((float(j) + 0.5) / ny - 0.5);
+				sum += tap(s + o);
+			}
+		}
+	}
+	return sum / (nx * ny);
+}
+
+// How much of the output pixel the source rectangle covers.
+float edge_coverage(float2 s, float2 dx, float2 dy)
+{
+	float gx = clamp(length(float2(dx.x, dy.x)), 1e-3, 4.0);
+	float gy = clamp(length(float2(dx.y, dy.y)), 1e-3, 4.0);
+	float ex = min(s.x, src_size.x - s.x) / gx;
+	float ey = min(s.y, src_size.y - s.y) / gy;
+	return saturate(ex + 0.5) * saturate(ey + 0.5);
+}
+
+float3 decode_rgb(float3 enc)
+{
+	return linear_input > 0.5 ? srgb_to_linear(enc) : enc;
+}
+
+// One layer of the result: the source at s, with its edges anti-aliased,
+// optionally the back side (tinted) and shaded. Premultiplied.
+float4 source_layer(float2 s, float back, float shade)
+{
+	float2 dx = ddx(s);
+	float2 dy = ddy(s);
+	float4 c = sample_area(s, dx, dy);
+	float cov = edge_coverage(s, dx, dy);
+	if (c.a <= 0.0 || cov <= 0.0)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	float3 rgb = c.rgb / c.a;
+	if (back > 0.0 && wp_back_color.a > 0.0) {
+		float3 enc = encode_input(float4(rgb, 1.0)).rgb;
+		enc = lerp(enc, wp_back_color.rgb, wp_back_color.a * back);
+		rgb = decode_rgb(enc);
+	}
+	// Shading darkens in linear light.
+	float3 lin = linear_input > 0.5 ? rgb : srgb_to_linear(saturate(rgb));
+	lin *= shade;
+	rgb = linear_input > 0.5 ? lin : linear_to_srgb(lin);
+	float a = c.a * cov;
+	return float4(rgb * a, a);
+}
+
+float4 over(float4 top, float4 bottom)
+{
+	return top + bottom * (1.0 - top.a);
+}
+
+/* Homography (corner pin, tilt) ---------------------------------------- */
+
+float4 draw_homography(float2 x)
+{
+	float3 h = float3(dot(hom0.xyz, float3(x, 1.0)), dot(hom1.xyz, float3(x, 1.0)), dot(hom2.xyz, float3(x, 1.0)));
+	// Behind the horizon (or a degenerate quad): nothing.
+	float valid = (hom_valid > 0.5 && h.z > 1e-9) ? 1.0 : 0.0;
+	float2 s = h.xy / max(h.z, 1e-9);
+	// Keep the derivatives finite past the horizon.
+	s = valid > 0.5 ? s : float2(-1e4, -1e4);
+	return source_layer(s, backside, 1.0) * valid;
+}
+
+/* Mesh ----------------------------------------------------------------- */
+
+float4 map_node(float2 i)
+{
+	i = clamp(i, float2(0.0, 0.0), map_nodes - 1.0);
+	return map_tex.SampleLevel(pointSampler, (i + 0.5) / map_nodes, 0.0);
+}
+
+float4 cr_weights(float t)
+{
+	float t2 = t * t;
+	float t3 = t2 * t;
+	return 0.5 * float4(-t3 + 2.0 * t2 - t, 3.0 * t3 - 5.0 * t2 + 2.0, -3.0 * t3 + 4.0 * t2 + t, t3 - t2);
+}
+
+float4 draw_mesh(float2 uv)
+{
+	// Catmull-Rom across the nodes (the map is smooth, keep it so).
+	float2 g = uv * (map_nodes - 1.0);
+	float2 i0 = floor(g);
+	float2 f = g - i0;
+	float4 wx = cr_weights(f.x);
+	float4 wy = cr_weights(f.y);
+	float3 m = float3(0.0, 0.0, 0.0);
+	for (int j = 0; j < 4; j++) {
+		float3 row = map_node(i0 + float2(-1.0, float(j) - 1.0)).xyz * wx.x +
+			     map_node(i0 + float2(0.0, float(j) - 1.0)).xyz * wx.y +
+			     map_node(i0 + float2(1.0, float(j) - 1.0)).xyz * wx.z +
+			     map_node(i0 + float2(2.0, float(j) - 1.0)).xyz * wx.w;
+		float w = j == 0 ? wy.x : (j == 1 ? wy.y : (j == 2 ? wy.z : wy.w));
+		m += row * w;
+	}
+	return source_layer(m.xy, 0.0, 1.0) * saturate(m.z * 2.0 - 0.5);
+}
+
+/* Bend ----------------------------------------------------------------- */
+
+float4 draw_bend(float2 x)
+{
+	float theta = wp_bend_angle * PI / 180.0;
+	if (abs(theta) < 1e-5)
+		return source_layer(x, 0.0, 1.0);
+	bool vertical = wp_bend_axis == 2;
+	float2 c = src_size * 0.5;
+	float2 q = x - c;
+	// (along, across) the bent axis; positive angles bow towards -across.
+	float2 p = vertical ? float2(q.y, -q.x) : q;
+	float len = vertical ? src_size.y : src_size.x;
+	float sgn = theta > 0.0 ? 1.0 : -1.0;
+	p.y *= sgn;
+	float radius = len / abs(theta);
+	// Circle centre at (0, radius). Written without cancellation, so tiny
+	// angles (huge radii) stay exact.
+	float dy = radius - p.y;
+	float r = sqrt(p.x * p.x + dy * dy);
+	float phi = atan2(p.x, dy);
+	float2 src = float2(phi * radius, (2.0 * radius * p.y - p.x * p.x - p.y * p.y) / (radius + r));
+	src.y *= sgn;
+	float2 sq = vertical ? float2(-src.y, src.x) : src;
+	return source_layer(sq + c, 0.0, 1.0);
+}
+
+/* Page curl and roll ---------------------------------------------------- */
+
+// The source along the curl direction through x, at arc length t past the
+// fold.
+float2 curl_point(float2 x, float d, float t)
+{
+	return x + (t - d) * curl_dir;
+}
+
+// Far end of the source (along curl_dir) on the line through x, relative
+// to the fold, or -1e6 when the line misses it.
+float line_far_end(float2 x, float proj)
+{
+	float2 dir = curl_dir;
+	dir.x = abs(dir.x) < 1e-6 ? 1e-6 : dir.x;
+	dir.y = abs(dir.y) < 1e-6 ? 1e-6 : dir.y;
+	float2 inv = 1.0 / dir;
+	float2 t0 = (float2(0.0, 0.0) - x) * inv;
+	float2 t1 = (src_size - x) * inv;
+	float2 tmin = min(t0, t1);
+	float2 tmax = max(t0, t1);
+	float lo = max(tmin.x, tmin.y);
+	float hi = min(tmax.x, tmax.y);
+	return hi >= lo ? proj + hi - curl_fold : -1e6;
+}
+
+float4 draw_curl(float2 x, bool roll)
+{
+	float r = max(wp_curl_radius, 0.5);
+	float proj = dot(x, curl_dir);
+	float d = proj - curl_fold;
+	float a1 = asin(clamp(d / r, 0.0, 1.0)); // lower (inner) side of the cylinder
+	float far_end = line_far_end(x, proj);
+	float circ = TAU * r;
+	float shade_amt = wp_shading / 100.0;
+	// Anti-aliased silhouettes of the cylinder (d = r, and d = -r for a roll).
+	float aa = max(length(float2(ddx(d), ddy(d))), 1e-4);
+	float sil = saturate((r - d) / aa + 0.5);
+	float sil_roll = saturate((r - abs(d)) / aa + 0.5);
+
+	// Top: the outer (back) side of the paper, going over the cylinder
+	// (axis at d = 0, height r). Page curl: then lying flat, face down, back
+	// over the page. Roll: the outermost turn wound around the whole
+	// cylinder, both sides of the axis.
+	float t_top0 = (d >= 0.0 || roll) ? r * (PI - asin(clamp(d / r, -1.0, 1.0))) : PI * r - d;
+	float k_top = roll ? max(floor((far_end - t_top0) / circ), 0.0) : 0.0;
+	float t_top = t_top0 + k_top * circ;
+	float top_ok = roll ? sil_roll : sil;
+	float top_ok_prev = (roll && k_top >= 1.0) ? sil_roll : 0.0;
+	// Light from above: the cylinder's top faces up, its sides darken.
+	float n_top = (d >= 0.0 || roll) ? sqrt(saturate(1.0 - (d / r) * (d / r))) : 1.0;
+	float shade_top = lerp(1.0, 0.3 + 0.7 * n_top, shade_amt);
+	float4 top = source_layer(curl_point(x, d, t_top), 1.0, shade_top) * top_ok;
+	float4 top_prev = source_layer(curl_point(x, d, t_top - circ), 1.0, shade_top) * top_ok_prev;
+
+	// Bottom: the flat page, then the inner (front) side of the cylinder.
+	float t_bot0 = d < 0.0 ? d : r * a1;
+	float k_bot = (roll && d >= 0.0) ? max(floor((far_end - t_bot0) / circ), 0.0) : 0.0;
+	float t_bot = t_bot0 + k_bot * circ;
+	float bot_ok = sil;
+	float shade_bot = d >= 0.0 ? lerp(1.0, 0.2 + 0.8 * cos(a1), shade_amt) : 1.0;
+	float4 bot = source_layer(curl_point(x, d, t_bot), 0.0, shade_bot) * bot_ok;
+	float4 bot_prev = source_layer(curl_point(x, d, t_bot - circ), 0.0, shade_bot) *
+			  ((roll && k_bot >= 1.0 && d >= 0.0) ? sil : 0.0);
+
+	// A soft shadow of the lifted paper on what lies under it: past the
+	// cylinder, and (page curl) around the flap lying on the page.
+	float soft = max(r * 0.75, 6.0);
+	float lifted = far_end > 0.0 ? 1.0 : 0.0;
+	float dist = roll ? abs(d) : d;
+	float sh_cyl = (dist > 0.0 && (roll || d > 0.0)) ? (1.0 - smoothstep(r * 0.5, r + soft, dist)) : 0.0;
+	// Fade the shadow out where the line through x leaves the paper.
+	float2 perp = float2(-curl_dir.y, curl_dir.x);
+	float pp = dot(x, perp);
+	float4 cp = float4(0.0, dot(float2(src_size.x, 0.0), perp), dot(src_size, perp), dot(float2(0.0, src_size.y), perp));
+	float pmin = min(min(cp.x, cp.y), min(cp.z, cp.w));
+	float pmax = max(max(cp.x, cp.y), max(cp.z, cp.w));
+	float side = saturate(min(pp - pmin, pmax - pp) / soft + 0.5);
+	float sh = sh_cyl * lifted * side;
+	if (!roll && d < 0.0) {
+		float2 s = curl_point(x, d, t_top);
+		float e = min(min(s.x, src_size.x - s.x), min(s.y, src_size.y - s.y));
+		sh = max(sh, (1.0 - smoothstep(0.0, soft, -e)) * 0.8);
+	}
+	float4 shadow = float4(0.0, 0.0, 0.0, saturate(sh * wp_shadow / 100.0));
+
+	float4 c = over(top, top_prev);
+	c = over(c, shadow);
+	c = over(c, over(bot, bot_prev));
+	return c;
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 x = v_in.uv * uv_size - pad_px; // output px, source frame
+	float4 c;
+	if (wp_mode == MODE_MESH3 || wp_mode == MODE_MESH4)
+		c = draw_mesh(v_in.uv);
+	else if (wp_mode == MODE_BEND)
+		c = draw_bend(x);
+	else if (wp_mode == MODE_PAGE_CURL)
+		c = draw_curl(x, false);
+	else if (wp_mode == MODE_ROLL)
+		c = draw_curl(x, true);
+	else
+		c = draw_homography(x);
+
+	if (c.a <= 1e-6)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	float4 straight = float4(c.rgb / c.a, c.a);
+	return fx_output(encode_input(straight), v_in.uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}
