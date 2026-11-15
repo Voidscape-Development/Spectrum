@@ -5,7 +5,6 @@
 #include "transition-common.h"
 #include "../stroke/obs-utils.h"
 
-#include <graphics/image-file.h>
 #include <util/dstr.h>
 
 #define MAP_IMAGE 1
@@ -18,8 +17,10 @@ struct luma_data {
 	gs_texrender_t *map_texrender;
 
 	struct dstr image_path;
-	gs_image_file_t image; // texture created/freed inside the graphics context
-	bool image_loaded;
+	// Decoded off the graphics thread with gs_create_texture_file_data() and
+	// uploaded under the graphics lock. The gs_image_file_* API is not used:
+	// OBS Studio 33 removed it, and referencing it stops the module loading.
+	gs_texture_t *image;
 };
 
 static void luma_create_hook(fx_filter_t *fx, obs_data_t *settings)
@@ -34,9 +35,10 @@ static void luma_create_hook(fx_filter_t *fx, obs_data_t *settings)
 static void free_image(struct luma_data *d)
 {
 	obs_enter_graphics();
-	gs_image_file_free(&d->image);
+	if (d->image)
+		gs_texture_destroy(d->image);
 	obs_leave_graphics();
-	d->image_loaded = false;
+	d->image = NULL;
 }
 
 static void luma_update_hook(fx_filter_t *fx, obs_data_t *settings)
@@ -54,17 +56,18 @@ static void luma_update_hook(fx_filter_t *fx, obs_data_t *settings)
 
 	// Decode outside the graphics context, then swap the texture in
 	// inside it, so the render thread never sees a half loaded image.
-	gs_image_file_t image;
-	memset(&image, 0, sizeof(image));
+	enum gs_color_format format = GS_UNKNOWN;
+	uint32_t cx = 0, cy = 0;
+	uint8_t *pixels = NULL;
 	if (*path)
-		gs_image_file_init(&image, path);
+		pixels = gs_create_texture_file_data(path, &format, &cx, &cy);
 	obs_enter_graphics();
-	gs_image_file_free(&d->image);
-	d->image = image;
-	gs_image_file_init_texture(&d->image);
-	d->image_loaded = d->image.texture != NULL;
+	if (d->image)
+		gs_texture_destroy(d->image);
+	d->image = pixels ? gs_texture_create(cx, cy, format, 1, (const uint8_t **)&pixels, 0) : NULL;
 	obs_leave_graphics();
-	if (*path && !d->image_loaded)
+	bfree(pixels);
+	if (*path && !d->image)
 		blog(LOG_WARNING, "[Spectrum] Luma wipe: unable to load image '%s'", path);
 }
 
@@ -127,8 +130,8 @@ static void luma_set_params(fx_filter_t *fx, gs_effect_t *effect, obs_data_t *se
 	struct luma_data *d = fx->user;
 	gs_texture_t *map = NULL;
 	bool linear = false;
-	if (d->type == MAP_IMAGE && d->image_loaded) {
-		map = d->image.texture;
+	if (d->type == MAP_IMAGE && d->image) {
+		map = d->image;
 	} else if (d->type == MAP_SOURCE) {
 		obs_source_t *source = source_ref_get(&d->map_ref);
 		if (source && !is_self_reference(fx->context, source)) {
