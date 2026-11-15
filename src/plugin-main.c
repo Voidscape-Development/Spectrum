@@ -64,6 +64,9 @@ extern struct obs_source_info spectrum_animate_filter;
 /* Text */
 extern struct obs_source_info spectrum_text_source;
 
+/* Retro */
+extern struct obs_source_info spectrum_retro_filter;
+
 #include "common/fx-filter.h"
 
 // Registers a filter built on the fx framework, which supports Move
@@ -124,6 +127,8 @@ bool obs_module_load(void)
 	obs_register_source(&spectrum_animate_filter);
 
 	obs_register_source(&spectrum_text_source);
+
+	register_fx_filter(&spectrum_retro_filter);
 
 	obs_log(LOG_INFO, "loaded version %s", PLUGIN_VERSION);
 	return true;

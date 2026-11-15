@@ -210,4 +210,7 @@ target_sources(
   PRIVATE src/text/text-layout.cpp src/text/text-layout.hpp src/text/text-source.cpp
 )
 
+# Retro (oil paint, ASCII, palettes, VHS)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/retro.c)
+
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
