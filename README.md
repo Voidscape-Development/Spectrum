@@ -57,7 +57,7 @@ Animated procedural backgrounds such as lava, plasma, aurora, fog, marble and ce
 Patterns: a twinkling **starfield** with parallax layers (Detail Layers set the depth layers; with Flow, nearer layers pass faster), soft **drifting particles/dust**, **water caustics**, animated **Truchet tiles** and a **hex grid** with pulsing cells and glowing edges. Density, Size / Line Width and Twinkle / Pulse shape them.
 
 ### Spectrum Gradient Map (filter)
-Maps brightness, perceptual lightness or a single channel through a gradient, for duotones, thermal looks and stylized grades. It has black/white points, gamma, nine blend modes and an amount.
+Maps brightness, perceptual lightness or a single channel through a gradient, for duotones, thermal looks and stylized grades. It has black/white points, gamma, 26 blend modes and an amount.
 
 ### Spectrum Color Tools (filter)
 Exposure, temperature/tint, contrast, saturation and vibrance, levels, master and per-channel curves, HSL adjustments for eight color ranges, split toning, and 3D LUTs from `.cube` files.
@@ -77,6 +77,10 @@ Four retro and painterly looks, each off by default. Only the enabled ones run, 
 - **ASCII Art:** the picture as a grid of characters picked by brightness from a built-in 5x7 glyph ramp, anti-aliased, with character size, original colors, mono, or a custom text color on a background color, and an amount to blend with the original.
 - **Retro Palette:** Game Boy, CGA, CGA/EGA 16 colors, PICO-8 style, 1-bit or a custom 2-4 color palette, with ordered (Bayer 2x2/4x4/8x8) or blue noise dithering and a pixel size. Colors are matched in Oklab (or by brightness only, for shade palettes) and the two nearest palette colors are mixed in linear light, so dithered areas keep their brightness.
 - **VHS:** animated tracking errors (a rolling band of tearing and snow), wobble, chroma bleed and delay, tape noise and dropouts, and head switching noise at the bottom.
+
+### Spectrum Composite and Edge (filters)
+- **Composite:** blends another source or an image file onto the source with 26 Photoshop-style blend modes (multiply, screen, overlay, soft/hard/vivid/linear/pin light, color dodge/burn, linear dodge/burn, hard mix, difference, exclusion, subtract, divide, hue, saturation, color, luminosity, lighter/darker color...) and an opacity. Place the layer stretched, fit, filled, tiled or at its original size, then move, scale and rotate it. Composite over the source or only inside its alpha, swap the order to put the layer underneath, and fade it with an opacity mask from another source's brightness or alpha, or from a gradient.
+- **Edge:** toon/ink outlines (Sobel on brightness and color, or difference of Gaussians) with threshold, softness and line thickness plus optional cel shading; neon edges in a color, a gradient by edge direction or across the source, or the source's own colors, with a float glow; pencil sketch (XDoG lines with hatching); and emboss. Draw over the source, a solid color or transparency, with an overall amount.
 
 ### Spectrum Animate (filter)
 Drives numeric settings of any filter on a source, or of the source itself. It works with OBS's built-in filters and with other plugins too.
@@ -100,8 +104,8 @@ Scene transitions that blend in linear light, dither their output, keep HDR valu
 - **Presets:** every Spectrum filter, source and transition can save, load and delete named presets.
 - **React to Audio:** every Spectrum filter and source has a "React to Audio" group. Pick an audio source and up to two of the filter's own numeric settings with a From (silence) and To (full level) value, or add the amount to the value you set. Silence and full levels, attack and release shape the response; "Kick on Beats" jumps on transients such as drum hits instead and decays. The modulated values are never written into the filter's saved settings, so the values you set stay as they are.
 - **Hotkeys:** every Spectrum filter gets Enable and Disable hotkeys (bind one key to both to toggle), and every filter and source gets "Apply preset" and "Undo preset" hotkeys for each saved preset of its kind, in Settings > Hotkeys. Bindings are saved with the scene collection.
-- **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, shape rotation and shadow offset, text shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, and the light ray, flare and point light positions. Changes show live, and Cancel restores the previous values.
-- **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort, Stylize and Retro filters interpolate between two filter states.
+- **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, shape rotation and shadow offset, text shadow offset, Shadow filter offset, long shadow direction, bevel light direction, aberration direction, distortion center and wave direction, the light ray, flare and point light positions, the Composite layer position, rotation and mask gradient, and the Edge emboss light and hatching angles. Changes show live, and Cancel restores the previous values.
+- **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Bevel & Emboss, Distort, Stylize, Retro, Composite and Edge filters interpolate between two filter states.
 - **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame (marching dashes keep moving on a cached stroke).
 
 ## Building

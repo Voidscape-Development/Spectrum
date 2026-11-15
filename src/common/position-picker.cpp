@@ -117,6 +117,14 @@ const std::map<std::string, std::vector<HandleSpec>> &specs()
 		 {PT("Picker.RaysSource", "li_rays_x", "li_rays_y"),
 		  PT("Picker.FlarePosition", "li_flare_x", "li_flare_y"),
 		  PT("Picker.PointLight", "li_light_x", "li_light_y")}},
+		{"spectrum_composite_filter",
+		 {PT("Picker.LayerPosition", "cm_x", "cm_y"), ANGLE("Picker.LayerRotation", "cm_rotation", 0, false),
+		  PT_IF("Picker.MaskGradientCenter", "cm_mask_gradient_center_x", "cm_mask_gradient_center_y",
+			"cm_mask_type", 3),
+		  ANGLE_IF("Picker.MaskGradientAngle", "cm_mask_gradient_angle", 2, false, "cm_mask_type", 3)}},
+		{"spectrum_edge_filter",
+		 {ANGLE_IF("Picker.LightAngle", "ed_angle", -1, true, "ed_mode", 4),
+		  ANGLE_IF("Picker.HatchAngle", "ed_hatch_angle", -1, false, "ed_mode", 3)}},
 	};
 	return table;
 }

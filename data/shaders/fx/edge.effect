@@ -1,0 +1,417 @@
+// Spectrum Edge: toon/ink outlines with optional cel shading, neon edges,
+// pencil sketch (XDoG plus hatching) and emboss, all from the luma (and the
+// alpha) of the source.
+//
+// Passes (src/fx/edge.c): Prep -> Blur (H, V; two sigmas at once) -> Edge
+// -> Dilate (line thickness) -> Colorize + Glow (neon) -> Draw.
+// Pass textures are float; Draw composites onto the output.
+#include "fx-common.effect"
+
+uniform int ed_mode;                  // 1 toon, 2 neon, 3 pencil, 4 emboss
+uniform float ed_amount = 100.0;      // %
+uniform int ed_method;                // toon: 1 Sobel, 2 difference of Gaussians
+uniform float ed_threshold = 20.0;    // %
+uniform float ed_softness = 20.0;     // %
+uniform float ed_thickness = 2.0;     // px
+uniform float4 ed_ink_color;
+uniform float ed_cel_levels = 0.0;    // 0 = off
+uniform float ed_cel_softness = 20.0; // %
+uniform int ed_background;            // 1 image, 2 color, 3 transparent
+uniform float4 ed_bg_color;
+uniform float ed_bg_dim = 0.0;        // % (image background)
+// Neon
+uniform int ed_neon_fill;             // 1 color, 2 gradient by direction, 3 gradient across, 4 source colors
+uniform float4 ed_neon_color;
+uniform float ed_neon_intensity = 150.0; // %
+uniform float ed_glow = 150.0;        // %
+// Pencil
+uniform float4 ed_pencil_color;
+uniform float ed_sketch = 20.0;       // XDoG sharpening
+uniform float ed_hatch = 60.0;        // %
+uniform float ed_hatch_size = 6.0;    // px
+uniform float ed_hatch_angle = 45.0;  // degrees
+// Emboss
+uniform float ed_angle = 135.0;       // light azimuth, degrees
+uniform float ed_emboss = 100.0;      // %
+uniform float ed_emboss_size = 2.0;   // px
+
+// Pass inputs.
+uniform texture2d pass_tex;
+uniform float2 pass_texel;
+uniform float2 blur_dir;    // one texel along the blur axis
+uniform float sigma1 = 1.0; // px
+uniform float sigma2 = 1.6; // px
+uniform float taps = 0.0;   // per side
+uniform float stride = 1.0; // px between taps
+uniform float dilate_radius = 0.0;
+uniform float sobel_layout = 0.0; // Prep/Blur hold (luma, Oklab a, b, alpha), one sigma
+uniform float ed_color_edges = 100.0; // %
+uniform texture2d blur_tex;
+uniform texture2d edge_tex;
+uniform texture2d core_tex;
+uniform texture2d glow_tex;
+uniform float use_glow = 0.0;
+
+#define MODE_TOON 1
+#define MODE_NEON 2
+#define MODE_PENCIL 3
+#define MODE_EMBOSS 4
+
+/* Prep: (luma, luma, alpha, alpha), luma premultiplied ------------------- */
+
+float4 PSPrep(VertData v_in) : TARGET
+{
+	float4 c = fx_input(v_in.uv);
+	float l = luma(c.rgb) * c.a;
+	if (sobel_layout > 0.5) {
+		// (luma, Oklab a, Oklab b, alpha), premultiplied: Sobel also
+		// finds edges between colors of the same brightness.
+		float2 ab = srgb_to_oklab(c.rgb).yz * 2.0 * c.a;
+		return float4(l, ab, c.a);
+	}
+	return float4(l, l, c.a, c.a);
+}
+
+/* Separable Gaussian with two sigmas: rg = lum(s1, s2), ba = alpha ------- */
+
+float4 PSBlur(VertData v_in) : TARGET
+{
+	float4 sum = pass_tex.Sample(textureSampler, v_in.uv);
+	float4 wsum = float4(1.0, 1.0, 1.0, 1.0);
+	float k1 = -0.5 / max(sigma1 * sigma1, 1e-4);
+	float k2 = -0.5 / max(sigma2 * sigma2, 1e-4);
+	for (int i = 1; i <= 48; i++) {
+		if (float(i) > taps)
+			break;
+		float x = float(i) * stride;
+		float w1 = exp(x * x * k1);
+		float w2 = exp(x * x * k2);
+		float4 w = float4(w1, w2, w1, w2);
+		float2 o = blur_dir * x;
+		sum += (pass_tex.Sample(textureSampler, v_in.uv + o) + pass_tex.Sample(textureSampler, v_in.uv - o)) * w;
+		wsum += 2.0 * w;
+	}
+	return sum / wsum;
+}
+
+/* Glow: plain separable Gaussian of a premultiplied color ---------------- */
+
+float4 PSGlow(VertData v_in) : TARGET
+{
+	float4 sum = pass_tex.Sample(textureSampler, v_in.uv);
+	float wsum = 1.0;
+	float k1 = -0.5 / max(sigma1 * sigma1, 1e-4);
+	for (int i = 1; i <= 48; i++) {
+		if (float(i) > taps)
+			break;
+		float x = float(i) * stride;
+		float w = exp(x * x * k1);
+		float2 o = blur_dir * x;
+		sum += (pass_tex.Sample(textureSampler, v_in.uv + o) + pass_tex.Sample(textureSampler, v_in.uv - o)) * w;
+		wsum += 2.0 * w;
+	}
+	return sum / wsum;
+}
+
+/* Edge detection --------------------------------------------------------- */
+
+float4 btap(float2 uv, float dx, float dy)
+{
+	return blur_tex.Sample(textureSampler, uv + float2(dx, dy) * pass_texel);
+}
+
+// Line coverage (r), sketch tone (g, 1 = paper) and the gradient direction
+// (ba, encoded as 0.5 + 0.5 * dir).
+float4 PSEdge(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	float4 c = btap(uv, 0.0, 0.0);
+
+	// Sobel on the smoothed luma (r) and alpha (b).
+	float4 tl = btap(uv, -1.0, -1.0);
+	float4 t = btap(uv, 0.0, -1.0);
+	float4 tr = btap(uv, 1.0, -1.0);
+	float4 l = btap(uv, -1.0, 0.0);
+	float4 r = btap(uv, 1.0, 0.0);
+	float4 bl = btap(uv, -1.0, 1.0);
+	float4 b = btap(uv, 0.0, 1.0);
+	float4 br = btap(uv, 1.0, 1.0);
+	float4 gx = (tr + 2.0 * r + br - tl - 2.0 * l - bl) * 0.25;
+	float4 gy = (bl + 2.0 * b + br - tl - 2.0 * t - tr) * 0.25;
+	float2 g_l = float2(gx.r, gy.r);
+	float2 g_a;
+	float mag_c = 0.0;
+	if (sobel_layout > 0.5) {
+		g_a = float2(gx.a, gy.a);
+		// Color edges, weighted by the color edge setting.
+		mag_c = sqrt(gx.g * gx.g + gy.g * gy.g + gx.b * gx.b + gy.b * gy.b) * ed_color_edges / 100.0;
+	} else {
+		g_a = float2(gx.b, gy.b);
+	}
+	float mag = max(max(length(g_l), length(g_a)), mag_c);
+	float2 g = length(g_l) >= length(g_a) ? g_l : g_a;
+	if (mag_c > max(length(g_l), length(g_a))) {
+		// Direction of the strongest color channel change.
+		float2 ga = float2(gx.g, gy.g);
+		float2 gb = float2(gx.b, gy.b);
+		g = length(ga) >= length(gb) ? ga : gb;
+	}
+	float2 dir = length(g) > 1e-6 ? normalize(g) : float2(0.0, 0.0);
+
+	float th = ed_threshold / 100.0;
+	float soft = ed_softness / 100.0;
+	float line = 0.0;
+	float tone = 1.0;
+
+	if (ed_mode == MODE_PENCIL) {
+		// XDoG on the luma over white paper.
+		float u1 = c.r + (1.0 - c.b);
+		float u2 = c.g + (1.0 - c.a);
+		float u = u1 + ed_sketch * (u1 - u2);
+		float eps = th;
+		float phi = 1.0 / (0.004 + soft * 0.2);
+		tone = u >= eps ? 1.0 : 1.0 + tanh(phi * (u - eps));
+		tone = saturate(tone);
+		line = 1.0 - tone;
+	} else if (ed_mode == MODE_TOON && ed_method == 2) {
+		// Difference of Gaussians: lines on the dark side of an edge.
+		float d = max(c.g - c.r, c.a - c.b);
+		float t0 = th * 0.08;
+		float w = 0.002 + soft * 0.05;
+		line = smoothstep(t0, t0 + w, d);
+	} else {
+		float t0 = th * 0.5;
+		float w = 0.005 + soft * 0.25;
+		line = saturate((mag - t0) / w + 0.5);
+		line = line * line * (3.0 - 2.0 * line);
+	}
+	return float4(line, tone, dir * 0.5 + 0.5);
+}
+
+/* Dilate: anti-aliased disk max, for thick lines ------------------------- */
+
+float4 PSDilate(VertData v_in) : TARGET
+{
+	float4 best = pass_tex.Sample(textureSampler, v_in.uv);
+	float rad = dilate_radius;
+	for (int y = -8; y <= 8; y++) {
+		if (abs(float(y)) > rad + 0.5)
+			continue;
+		for (int x = -8; x <= 8; x++) {
+			float d = length(float2(float(x), float(y)));
+			float w = saturate(rad + 0.5 - d);
+			if (w <= 0.0)
+				continue;
+			float4 s = pass_tex.Sample(textureSampler, v_in.uv + float2(float(x), float(y)) * pass_texel);
+			float v = s.r * w;
+			if (v > best.r)
+				best = float4(v, best.g, s.ba);
+		}
+	}
+	return best;
+}
+
+/* Neon colorize: premultiplied linear light ------------------------------ */
+
+float3 neon_color(float2 uv, float2 dir, float4 src)
+{
+	if (ed_neon_fill == 2) {
+		// Edge orientation (0 = vertical edges, 1 = horizontal).
+		float t = 0.5 - 0.5 * (dir.x * dir.x - dir.y * dir.y);
+		return gradient_sample(t).rgb;
+	}
+	if (ed_neon_fill == 3)
+		return gradient_sample(uv.x).rgb;
+	if (ed_neon_fill == 4) {
+		// The source's colors at full brightness.
+		float m = max(src.r, max(src.g, src.b));
+		return m > 1e-3 ? src.rgb / m : float3(1.0, 1.0, 1.0);
+	}
+	return ed_neon_color.rgb;
+}
+
+float4 PSColorize(VertData v_in) : TARGET
+{
+	float4 e = pass_tex.Sample(textureSampler, v_in.uv);
+	float2 dir = e.ba * 2.0 - 1.0;
+	float3 col = neon_color(v_in.uv, dir, fx_input(v_in.uv));
+	float k = e.r;
+	return float4(srgb_to_linear(col) * k, k);
+}
+
+/* Composite -------------------------------------------------------------- */
+
+// The background under the effect, encoded, straight alpha.
+float4 background(float4 src)
+{
+	if (ed_background == 2)
+		return ed_bg_color;
+	if (ed_background == 3)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	return float4(src.rgb * (1.0 - saturate(ed_bg_dim / 100.0)), src.a);
+}
+
+// a over b, encoded straight alpha.
+float4 over(float4 a, float4 b)
+{
+	float ao = a.a + b.a * (1.0 - a.a);
+	float3 c = a.rgb * a.a + b.rgb * b.a * (1.0 - a.a);
+	return float4(ao > 1e-5 ? c / ao : a.rgb, ao);
+}
+
+float3 cel_shade(float3 enc)
+{
+	float n = floor(ed_cel_levels + 0.5);
+	if (n < 2.0)
+		return enc;
+	float3 lab = srgb_to_oklab(enc);
+	float q = lab.x * (n - 1.0);
+	float f = frac(q);
+	float w = max(saturate(ed_cel_softness / 100.0) * 0.5, 1e-3);
+	float s = smoothstep(0.5 - w, 0.5 + w, f);
+	lab.x = (floor(q) + s) / (n - 1.0);
+	return oklab_to_srgb(lab);
+}
+
+// Anti-aliased hatching stripes of the given coverage (0..1).
+float hatch_lines(float2 p, float angle_deg, float coverage)
+{
+	float a = angle_deg * PI / 180.0;
+	// Lines run along the angle (clockwise, y down).
+	float s = (p.y * cos(a) - p.x * sin(a)) / max(ed_hatch_size, 1.0);
+	// A little wobble, like a hand-drawn line.
+	s += (value_noise(p / 40.0 + float2(angle_deg, 0.0)) - 0.5) * 0.6;
+	float d = abs(frac(s) - 0.5) * max(ed_hatch_size, 1.0); // px from the line center
+	float half_w = coverage * 0.5 * max(ed_hatch_size, 1.0);
+	float aa = max(fwidth(s) * max(ed_hatch_size, 1.0), 0.5);
+	return saturate((half_w - d) / aa + 0.5) * step(0.001, coverage);
+}
+
+float4 PSDraw(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	float2 p = uv * uv_size;
+	float4 src = fx_input(uv);
+	float4 e = edge_tex.Sample(textureSampler, uv);
+	float4 bg = background(src);
+	float4 res;
+
+	if (ed_mode == MODE_NEON) {
+		float4 core = core_tex.Sample(textureSampler, uv) * (ed_neon_intensity / 100.0);
+		float4 glow = use_glow > 0.5 ? glow_tex.Sample(textureSampler, uv) * (ed_glow / 100.0) * 2.0
+					     : float4(0.0, 0.0, 0.0, 0.0);
+		float3 add = core.rgb + glow.rgb;
+		float3 premul = srgb_to_linear(bg.rgb) * bg.a + add;
+		float add_a = saturate(max(add.r, max(add.g, add.b)));
+		float ao = bg.a + add_a * (1.0 - bg.a);
+		float3 lin = ao > 1e-5 ? premul / ao : float3(0.0, 0.0, 0.0);
+		res = float4(linear_to_srgb(saturate(lin)), ao);
+	} else if (ed_mode == MODE_PENCIL) {
+		float4 c = blur_tex.Sample(textureSampler, uv);
+		float lum = saturate(c.r + (1.0 - c.b)); // smoothed luma over white
+		float dark = 1.0 - lum;
+		float h = 0.0;
+		if (ed_hatch > 0.0) {
+			float h1 = hatch_lines(p, ed_hatch_angle, saturate((dark - 0.2) * 1.4) * 0.5);
+			float h2 = hatch_lines(p, ed_hatch_angle + 90.0, saturate((dark - 0.55) * 2.0) * 0.5);
+			// Strokes fade in and out along their length, like a hand at work.
+			float strokes = 0.55 + 0.45 * value_noise(p / 14.0 + float2(7.0, 3.0));
+			h = max(h1, h2) * strokes * (0.4 + 0.6 * dark) * saturate(ed_hatch / 100.0);
+		}
+		// Graphite grain.
+		float grain = 0.8 + 0.2 * value_noise(p * 0.6);
+		float d = saturate(max(1.0 - e.g, h) * grain);
+		res = over(float4(ed_pencil_color.rgb, ed_pencil_color.a * d), bg);
+	} else if (ed_mode == MODE_EMBOSS) {
+		float a = ed_angle * PI / 180.0;
+		float2 o = float2(cos(a), -sin(a)) * max(ed_emboss_size, 0.25) * pass_texel;
+		float4 c0 = blur_tex.Sample(textureSampler, uv - o);
+		float4 c1 = blur_tex.Sample(textureSampler, uv + o);
+		// Luma (premultiplied, so alpha edges emboss too) facing the light.
+		float diff = (c0.r - c1.r) * ed_emboss / 100.0 * 2.0;
+		float relief = saturate(0.5 + diff);
+		if (ed_background == 3) {
+			// Highlights and shadows only, for layering over something else.
+			float3 w = diff >= 0.0 ? float3(1.0, 1.0, 1.0) : float3(0.0, 0.0, 0.0);
+			res = float4(w, saturate(abs(diff) * 2.0));
+		} else {
+			float3 lit = saturate(bg.rgb + 2.0 * relief - 1.0); // linear light
+			res = float4(lit, ed_background == 2 ? bg.a : src.a);
+		}
+	} else {
+		float4 base = bg;
+		if (ed_background == 1)
+			base.rgb = cel_shade(base.rgb);
+		res = over(float4(ed_ink_color.rgb, ed_ink_color.a * e.r), base);
+	}
+
+	// Amount: mix with the untouched source, premultiplied.
+	float k = saturate(ed_amount / 100.0);
+	float ao = lerp(src.a, res.a, k);
+	float3 c = lerp(src.rgb * src.a, res.rgb * res.a, k);
+	float4 outc = float4(ao > 1e-5 ? c / ao : res.rgb, ao);
+	return fx_output(outc, uv);
+}
+
+technique Prep
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSPrep(v_in);
+	}
+}
+
+technique Blur
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSBlur(v_in);
+	}
+}
+
+technique Glow
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSGlow(v_in);
+	}
+}
+
+technique Edge
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSEdge(v_in);
+	}
+}
+
+technique Dilate
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDilate(v_in);
+	}
+}
+
+technique Colorize
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSColorize(v_in);
+	}
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSDraw(v_in);
+	}
+}

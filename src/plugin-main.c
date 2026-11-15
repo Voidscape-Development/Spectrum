@@ -76,6 +76,10 @@ extern struct obs_source_info spectrum_glitch_transition;
 extern struct obs_source_info spectrum_pixelate_transition;
 extern struct obs_source_info spectrum_noise_dissolve_transition;
 
+/* Composite and Edge */
+extern struct obs_source_info spectrum_composite_filter;
+extern struct obs_source_info spectrum_edge_filter;
+
 #include "common/fx-filter.h"
 
 // Registers a filter built on the fx framework, which supports Move
@@ -146,6 +150,9 @@ bool obs_module_load(void)
 	obs_register_source(&spectrum_glitch_transition);
 	obs_register_source(&spectrum_pixelate_transition);
 	obs_register_source(&spectrum_noise_dissolve_transition);
+
+	register_fx_filter(&spectrum_composite_filter);
+	register_fx_filter(&spectrum_edge_filter);
 
 	obs_log(LOG_INFO, "loaded version %s", PLUGIN_VERSION);
 	return true;
