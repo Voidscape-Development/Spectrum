@@ -22,6 +22,7 @@
 // applied with obs_source_update() from video_tick.
 
 #include <obs-module.h>
+#include <stdio.h>
 #include <util/dstr.h>
 #include <util/threading.h>
 

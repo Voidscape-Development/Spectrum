@@ -7,6 +7,7 @@
 // everything off the filter is skipped entirely.
 
 #include "../common/fx-filter.h"
+#include <stdio.h>
 
 #include <graphics/vec4.h>
 #include <math.h>
