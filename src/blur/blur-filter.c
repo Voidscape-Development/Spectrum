@@ -1857,9 +1857,6 @@ static void lens_frost_visibility(obs_properties_t *props, obs_data_t *settings)
 	blur_setting_visibility("depth_focus_y", !mask_map && point, props);
 	blur_setting_visibility("depth_focus_range", !mask_map, props);
 	blur_setting_visibility("depth_focus_falloff", !mask_map, props);
-	// The Position Picker only has the focus point handle.
-	if (obs_properties_get(props, "spectrum_position_picker"))
-		blur_setting_visibility("spectrum_position_picker", depth && !mask_map && point, props);
 
 	const bool tint = obs_data_get_bool(settings, "frost_tint");
 	blur_setting_visibility("frost_tint_color", tint, props);

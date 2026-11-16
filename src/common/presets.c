@@ -5,7 +5,6 @@
 
 #include "presets.h"
 #include "audio-reactive.h"
-#include "position-picker.hpp"
 #include "source-hooks.h"
 
 #include <util/platform.h>
@@ -205,7 +204,6 @@ void spectrum_presets_properties(obs_properties_t *props, obs_source_t *source)
 {
 	if (!source)
 		return;
-	spectrum_position_picker_properties(props, source);
 	if (obs_source_get_type(source) != OBS_SOURCE_TYPE_TRANSITION)
 		spectrum_reactive_properties(props, source);
 	obs_properties_t *group = obs_properties_create();

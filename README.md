@@ -86,7 +86,7 @@ Reshapes a source in 2D and 3D. Every mode maps output pixels back to the source
 - **Page curl** and **roll:** peel the source back from a corner or edge, or roll it into a tube, with shading, a tinted back side and a soft shadow.
 - **Extra drawing area:** lets the result draw outside the source's original bounds.
 
-Corners and mesh points are offsets in pixels from where they start, so the defaults leave the source untouched at any size. The Position Picker has a handle for each corner and mesh point.
+Corners and mesh points are offsets in pixels from where they start, so the defaults leave the source untouched at any size.
 
 ### Spectrum Time FX (filter)
 Effects built from the source's recent frames.
@@ -114,7 +114,6 @@ Scene transitions that blend in linear light, dither their output, keep HDR valu
 - **Presets:** every Spectrum filter, source and transition can save, load and delete named presets.
 - **React to Audio:** every Spectrum filter and source has a "React to Audio" group. Pick an audio source and up to two of the filter's own numeric settings with a From (silence) and To (full level) value, or add the amount to the value you set. Silence and full levels, attack and release shape the response; "Kick on Beats" jumps on transients such as drum hits instead and decays. The modulated values are never written into the filter's saved settings, so the values you set stay as they are.
 - **Hotkeys:** every Spectrum filter gets Enable and Disable hotkeys (bind one key to both to toggle), and every filter and source gets "Apply preset" and "Undo preset" hotkeys for each saved preset of its kind, in Settings > Hotkeys. Bindings are saved with the scene collection.
-- **Position Picker:** filters and sources with positional settings get a "Position Picker..." button. It opens a live view of the result with draggable handles for centers, light positions, angles and offsets: gradient center and angle, mesh and color points, Shadow filter offset, long shadow direction, aberration direction, the light ray, flare and point light positions, the blur focus point, the Composite layer position, rotation and mask gradient, Warp's corner pin corners and mesh points, and the Time FX slit-scan center and direction. Changes show live, and Cancel restores the previous values.
 - **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Stylize, Retro, Composite and Warp filters interpolate between two filter states.
 - **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame (marching dashes keep moving on a cached stroke).
 
