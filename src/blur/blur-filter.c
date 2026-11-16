@@ -56,7 +56,6 @@ static void apply_effect_mask_source(blur_filter_data_t *filter);
 static void apply_effect_mask_circle(blur_filter_data_t *filter);
 static void effect_mask_load_effect(blur_filter_data_t *filter);
 
-
 struct obs_source_info spectrum_blur_filter = {.id = "spectrum_blur_filter",
 					       .type = OBS_SOURCE_TYPE_FILTER,
 					       .output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_SRGB,
