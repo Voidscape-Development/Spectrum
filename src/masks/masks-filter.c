@@ -1,6 +1,5 @@
 #include "masks-filter.h"
 #include "masks.h"
-#include "../common/audio-reactive.h"
 
 void *mask_font_awesome_create(base_filter_data_t *base);
 void mask_font_awesome_destroy(void *);
@@ -342,7 +341,6 @@ static obs_properties_t *mask_filter_properties(void *data)
 	feather_mask_properties(props);
 	mask_svg_properties(props, filter->svg_data);
 
-	spectrum_reactive_properties(props, data ? ((mask_filter_data_t *)data)->base->context : NULL);
 	return props;
 }
 

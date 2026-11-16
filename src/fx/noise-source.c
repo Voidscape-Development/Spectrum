@@ -2,7 +2,6 @@
 // gradient.
 
 #include "../common/fx-filter.h"
-#include "../common/audio-reactive.h"
 
 #define NZ_PREFIX "nz_gradient_"
 
@@ -143,7 +142,6 @@ static obs_properties_t *noise_properties(void *data)
 	gradient_properties_ex(props, NZ_PREFIX, fx ? &fx->gradient : NULL, GRADIENT_PROPS_MAP);
 
 	slider(props, "nz_opacity", "Gradient.Opacity", 0.0, 100.0, 0.1, "%");
-	spectrum_reactive_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 

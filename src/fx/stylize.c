@@ -2,7 +2,6 @@
 // halftone, scanlines, film grain and vignette, each off at zero.
 
 #include "../common/fx-filter.h"
-#include "../common/audio-reactive.h"
 
 static const struct fx_filter_def stylize_def = {
 	.effect_file = "shaders/fx/stylize.effect",
@@ -98,7 +97,6 @@ static obs_properties_t *stylize_properties(void *data)
 	group(props, "st_vignette_group", "Stylize.Vignette", g);
 
 	obs_properties_add_bool(props, "st_dither", obs_module_text("Gradient.Dither"));
-	spectrum_reactive_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 

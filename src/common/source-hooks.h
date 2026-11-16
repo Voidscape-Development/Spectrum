@@ -1,21 +1,13 @@
 #pragma once
 
-// Behaviour shared by every Spectrum filter and source, added without
-// touching each filter's code: plugin-main.c routes obs_register_source()
-// through spectrum_register_source(), which registers a copy of the
-// obs_source_info whose create/update/destroy/defaults callbacks are
-// wrapped. The wrappers keep a list of live instances and add:
+// Enable/Disable hotkeys for every Spectrum filter, added without touching
+// each filter's code: plugin-main.c routes obs_register_source() through
+// spectrum_register_source(), which registers filters with wrapped
+// create/destroy callbacks. Each filter instance gets an Enable/Disable
+// hotkey pair (Settings > Hotkeys, saved with the scene collection; bind
+// one key to both to toggle).
 //
-//  * Hotkeys (Settings > Hotkeys, saved with the scene collection like any
-//    source hotkey): an Enable/Disable pair on every filter (bind one key to
-//    both to toggle).
-//  * React to Audio (audio-reactive.h): every tick, the modulated values are
-//    handed to the instance's own update callback in a private copy of its
-//    settings. The saved settings are never written, so they keep the value
-//    the user set; when the user changes a setting, the update wrapper
-//    re-applies the modulation in the same call, so there is no flicker.
-//
-// Transitions are registered unchanged.
+// Sources and transitions are registered unchanged.
 
 #include <obs-module.h>
 

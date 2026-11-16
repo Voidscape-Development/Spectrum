@@ -21,8 +21,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "common/source-hooks.h"
 
-/* Every Spectrum filter/source registered below goes through the source
- * hooks (hotkeys, React to Audio); see common/source-hooks.h. */
+/* Every Spectrum filter registered below goes through the source hooks
+ * (Enable/Disable hotkeys); see common/source-hooks.h. */
 #undef obs_register_source
 #define obs_register_source(info) spectrum_register_source(info)
 

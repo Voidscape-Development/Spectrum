@@ -15,7 +15,6 @@
 // rendered, and reset when the source changes size.
 
 #include "../common/fx-filter.h"
-#include "../common/audio-reactive.h"
 
 #include <graphics/vec4.h>
 #include <util/threading.h>
@@ -675,6 +674,7 @@ static bool freeze_clicked(obs_properties_t *props, obs_property_t *property, vo
 
 static obs_properties_t *time_properties(void *data)
 {
+	UNUSED_PARAMETER(data);
 	obs_properties_t *props = obs_properties_create();
 	obs_property_t *p = obs_properties_add_list(props, "tf_mode", obs_module_text("TimeFx.Mode"),
 						    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -741,7 +741,6 @@ static obs_properties_t *time_properties(void *data)
 	obs_properties_add_text(props, "tf_memory", obs_module_text("TimeFx.Memory"), OBS_TEXT_INFO);
 
 	obs_properties_add_bool(props, "tf_dither", obs_module_text("Gradient.Dither"));
-	spectrum_reactive_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 

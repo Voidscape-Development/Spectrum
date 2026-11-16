@@ -9,7 +9,6 @@
 // of the control points, inverted on the CPU into a small lookup map.
 
 #include "../common/fx-filter.h"
-#include "../common/audio-reactive.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -566,6 +565,7 @@ static bool reset_points_clicked(obs_properties_t *props, obs_property_t *proper
 
 static obs_properties_t *warp_properties(void *data)
 {
+	UNUSED_PARAMETER(data);
 	obs_properties_t *props = obs_properties_create();
 	obs_property_t *p = obs_properties_add_list(props, "wp_mode", obs_module_text("Warp.Mode"), OBS_COMBO_TYPE_LIST,
 						    OBS_COMBO_FORMAT_INT);
@@ -634,7 +634,6 @@ static obs_properties_t *warp_properties(void *data)
 	p = obs_properties_add_bool(props, "wp_area_filter", obs_module_text("Warp.AreaFilter"));
 	obs_property_set_long_description(p, obs_module_text("Warp.AreaFilter.Description"));
 	obs_properties_add_bool(props, "wp_dither", obs_module_text("Gradient.Dither"));
-	spectrum_reactive_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 

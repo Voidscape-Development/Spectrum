@@ -5,7 +5,6 @@
 
 #include "../common/fx-filter.h"
 #include "../stroke/obs-utils.h"
-#include "../common/audio-reactive.h"
 
 #include <util/dstr.h>
 
@@ -373,7 +372,6 @@ static obs_properties_t *composite_properties(void *data)
 	gradient_properties(props, CM_GRADIENT, fx ? &fx->gradient : NULL);
 
 	obs_properties_add_bool(props, "cm_dither", obs_module_text("Gradient.Dither"));
-	spectrum_reactive_properties(props, fx ? fx->context : NULL);
 	return props;
 }
 

@@ -4,7 +4,6 @@
 #include "../common/fx-filter.h"
 
 #include <math.h>
-#include "../common/audio-reactive.h"
 
 #define LS_PREFIX "ls_gradient_"
 
@@ -87,7 +86,6 @@ static obs_properties_t *long_shadow_properties(void *data)
 	obs_property_float_set_suffix(p, "%");
 	obs_properties_add_bool(props, "ls_behind_only", obs_module_text("LongShadow.ShadowOnly"));
 	obs_properties_add_bool(props, "ls_dither", obs_module_text("Gradient.Dither"));
-	spectrum_reactive_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 
