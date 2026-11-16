@@ -258,7 +258,6 @@ static obs_properties_t *shape_wipe_properties(void *data)
 	tr_slider(props, "sw_softness", "Transition.Softness", 0.0, 1000.0, 0.5, "px");
 
 	tr_add_edge_properties(props, fx, "px", 500.0);
-	tr_finish_properties(props, data);
 	return props;
 }
 

@@ -198,6 +198,13 @@ float4 fx_input_border(float2 uv)
 	return encode_input(image.Sample(borderSampler, fx_input_uv(uv)));
 }
 
+// fx_input_border() without gradients (mip level 0), for use inside loops
+// with a data dependent exit: Direct3D would otherwise try to unroll them.
+float4 fx_input_border_lod(float2 uv)
+{
+	return encode_input(image.SampleLevel(borderSampler, fx_input_uv(uv), 0.0));
+}
+
 // Dithers an encoded, straight alpha color to the output bit depth and
 // converts it to what OBS expects.
 float4 fx_output(float4 c, float2 uv)

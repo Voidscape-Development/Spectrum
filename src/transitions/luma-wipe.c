@@ -224,7 +224,6 @@ static obs_properties_t *luma_wipe_properties(void *data)
 	obs_properties_add_bool(props, "lw_invert", obs_module_text("LumaWipe.Invert"));
 
 	tr_add_edge_properties(props, fx, "%", 50.0);
-	tr_finish_properties(props, data);
 	return props;
 }
 

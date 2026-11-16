@@ -593,51 +593,6 @@ void gradient_apply_palette(obs_data_t *settings, const char *prefix, const uint
 	}
 }
 
-bool gradient_picker_handle(obs_data_t *settings, const char *key, bool *visible, char *suffix, size_t suffix_size)
-{
-	static const char marker[] = "gradient_";
-	if (!key || !settings)
-		return false;
-	const char *p = strstr(key, marker);
-	if (!p)
-		return false;
-	const size_t plen = (size_t)(p - key) + sizeof(marker) - 1;
-	if (plen >= 64)
-		return false;
-	char prefix[64];
-	memcpy(prefix, key, plen);
-	prefix[plen] = '\0';
-	const char *name = key + plen;
-
-	char kbuf[128];
-	const int shape = (int)obs_data_get_int(settings, KEY("shape"));
-	if (suffix_size)
-		suffix[0] = '\0';
-
-	if (strcmp(name, "center_x") == 0 || strcmp(name, "angle") == 0) {
-		*visible = shape != GRADIENT_SHAPE_CORNERS && shape != GRADIENT_SHAPE_MESH &&
-			   shape != GRADIENT_SHAPE_POINTS;
-		return true;
-	}
-
-	int r = 0, c = 0, consumed = 0;
-	if (sscanf(name, "mesh_%d_%d_x%n", &r, &c, &consumed) == 2 && consumed && name[consumed] == '\0') {
-		const int cols = mesh_cols_of(settings, prefix), rows = mesh_rows_of(settings, prefix);
-		*visible = shape == GRADIENT_SHAPE_MESH && r >= 0 && c >= 0 && r < rows && c < cols;
-		snprintf(suffix, suffix_size, "%d,%d", r + 1, c + 1);
-		return true;
-	}
-	consumed = 0;
-	if (sscanf(name, "point_%d_x%n", &r, &consumed) == 1 && consumed && name[consumed] == '\0') {
-		const int count =
-			clamp_int((int)obs_data_get_int(settings, KEY("point_count")), 2, GRADIENT_POINTS_MAX);
-		*visible = shape == GRADIENT_SHAPE_POINTS && r >= 0 && r < count;
-		snprintf(suffix, suffix_size, "%d", r + 1);
-		return true;
-	}
-	return false;
-}
-
 /* ------------------------------------------------------------------------
  * Lifetime, defaults and update
  * --------------------------------------------------------------------- */

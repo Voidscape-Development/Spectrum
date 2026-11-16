@@ -225,14 +225,6 @@ size_t gradient_palette_to_stops(const uint32_t *colors, size_t count, struct gr
 // point colors when the shape is a mesh or free points.
 void gradient_apply_palette(obs_data_t *settings, const char *prefix, const uint32_t *colors, size_t count);
 
-/* Position Picker support ----------------------------------------------- */
-
-// When `key` is a position setting of a gradient (center, angle, mesh or
-// free point), sets *visible to whether the gradient's current shape uses it
-// and returns true; `suffix` gets a label suffix (the point's number, or "").
-// Returns false for other keys.
-bool gradient_picker_handle(obs_data_t *settings, const char *key, bool *visible, char *suffix, size_t suffix_size);
-
 // Small color helpers, shared with the editor.
 float gradient_srgb_to_linear(float v);
 float gradient_linear_to_srgb(float v);

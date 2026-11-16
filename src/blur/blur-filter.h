@@ -156,7 +156,6 @@ typedef struct external_source {
 
 struct blur_filter_data {
 	obs_source_t *context;
-	struct dstr filter_name;
 
 	// Effects
 	gs_effect_t *effect;
@@ -194,8 +193,6 @@ struct blur_filter_data {
 	gs_texrender_t *vb_gradient;
 	gs_texrender_t *vb_smoothed_gradient;
 	gs_texrender_t *vector_source_texrender;
-
-	obs_hotkey_pair_id hotkey;
 
 	bool rendering;
 	bool reload;

@@ -21,8 +21,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "common/source-hooks.h"
 
-/* Every Spectrum filter/source registered below goes through the source
- * hooks (hotkeys, React to Audio); see common/source-hooks.h. */
+/* Every Spectrum filter registered below goes through the source hooks
+ * (Enable/Disable hotkeys); see common/source-hooks.h. */
 #undef obs_register_source
 #define obs_register_source(info) spectrum_register_source(info)
 
@@ -50,19 +50,10 @@ extern struct obs_source_info spectrum_gradient_source;
 /* Effects */
 extern struct obs_source_info spectrum_gradient_map_filter;
 extern struct obs_source_info spectrum_long_shadow_filter;
-extern struct obs_source_info spectrum_bevel_filter;
 extern struct obs_source_info spectrum_color_tools_filter;
-extern struct obs_source_info spectrum_distort_filter;
 extern struct obs_source_info spectrum_stylize_filter;
 extern struct obs_source_info spectrum_light_filter;
-extern struct obs_source_info spectrum_shape_source;
 extern struct obs_source_info spectrum_noise_source;
-
-/* Animation */
-extern struct obs_source_info spectrum_animate_filter;
-
-/* Text */
-extern struct obs_source_info spectrum_text_source;
 
 /* Retro */
 extern struct obs_source_info spectrum_retro_filter;
@@ -76,9 +67,8 @@ extern struct obs_source_info spectrum_glitch_transition;
 extern struct obs_source_info spectrum_pixelate_transition;
 extern struct obs_source_info spectrum_noise_dissolve_transition;
 
-/* Composite and Edge */
+/* Composite */
 extern struct obs_source_info spectrum_composite_filter;
-extern struct obs_source_info spectrum_edge_filter;
 
 /* Warp and Time FX */
 extern struct obs_source_info spectrum_warp_filter;
@@ -133,17 +123,10 @@ bool obs_module_load(void)
 
 	register_fx_filter(&spectrum_gradient_map_filter);
 	register_fx_filter(&spectrum_long_shadow_filter);
-	register_fx_filter(&spectrum_bevel_filter);
 	register_fx_filter(&spectrum_color_tools_filter);
-	register_fx_filter(&spectrum_distort_filter);
 	register_fx_filter(&spectrum_stylize_filter);
 	obs_register_source(&spectrum_light_filter);
-	obs_register_source(&spectrum_shape_source);
 	obs_register_source(&spectrum_noise_source);
-
-	obs_register_source(&spectrum_animate_filter);
-
-	obs_register_source(&spectrum_text_source);
 
 	register_fx_filter(&spectrum_retro_filter);
 
@@ -156,7 +139,6 @@ bool obs_module_load(void)
 	obs_register_source(&spectrum_noise_dissolve_transition);
 
 	register_fx_filter(&spectrum_composite_filter);
-	register_fx_filter(&spectrum_edge_filter);
 
 	register_fx_filter(&spectrum_warp_filter);
 	obs_register_source(&spectrum_time_fx_filter);

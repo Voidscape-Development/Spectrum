@@ -1,5 +1,4 @@
 #include "transition-common.h"
-#include "../common/presets.h"
 
 #include <math.h>
 
@@ -173,9 +172,4 @@ void tr_add_edge_properties(obs_properties_t *props, fx_filter_t *fx, const char
 				 group);
 
 	gradient_properties_ex(props, TR_EDGE_PREFIX, fx ? &fx->gradient : NULL, GRADIENT_PROPS_MAP);
-}
-
-void tr_finish_properties(obs_properties_t *props, void *data)
-{
-	spectrum_presets_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 }

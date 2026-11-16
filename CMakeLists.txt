@@ -163,49 +163,17 @@ target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
     src/common/fx-filter.c
-    src/common/presets.c
-    src/common/presets.h
-    src/common/position-picker.cpp
-    src/common/position-picker.hpp
     src/common/fx-filter.h
     src/fx/gradient-map.c
     src/fx/long-shadow.c
-    src/fx/bevel.c
     src/fx/color-tools.c
-    src/fx/distort.c
     src/fx/stylize.c
     src/fx/light.c
-    src/fx/shape-source.c
     src/fx/noise-source.c
-    src/animate/animate-filter.c
 )
 
-# Animate: keyframes, triggers, more drivers, several targets
-target_sources(
-  ${CMAKE_PROJECT_NAME}
-  PRIVATE
-    src/animate/animate-cursor.cpp
-    src/animate/animate-ui.h
-    src/animate/curve-editor.cpp
-    src/animate/curve-editor.hpp
-    src/animate/keyframes.c
-    src/animate/keyframes.h
-)
-
-# Shared infrastructure: hotkeys and React to Audio for every filter/source
-target_sources(
-  ${CMAKE_PROJECT_NAME}
-  PRIVATE
-    src/common/audio-level.c
-    src/common/audio-level.h
-    src/common/audio-reactive.c
-    src/common/audio-reactive.h
-    src/common/source-hooks.c
-    src/common/source-hooks.h
-)
-
-# Spectrum Text
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/text/text-layout.cpp src/text/text-layout.hpp src/text/text-source.cpp)
+# Shared infrastructure: Enable/Disable hotkeys for every filter
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/common/source-hooks.c src/common/source-hooks.h)
 
 # Retro (oil paint, ASCII, palettes, VHS)
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/retro.c)
@@ -223,8 +191,8 @@ target_sources(
     src/transitions/effect-transitions.c
 )
 
-# Composite and Edge filters
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/composite.c src/fx/edge.c)
+# Composite filter
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/composite.c)
 
 # Blur: lens (bokeh), depth and frosted glass algorithms
 target_sources(

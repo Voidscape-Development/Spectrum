@@ -63,8 +63,8 @@ float4 PSDraw(VertData v_in) : TARGET
 	// Digital noise and bright scanlines.
 	float k = gt_noise / 100.0 * env;
 	if (k > 0.0) {
-		float line = floor(pix.y / 2.0);
-		float lit = step(1.0 - 0.08 * k, hash12(float2(line, fr + 9.0)));
+		float scan_row = floor(pix.y / 2.0);
+		float lit = step(1.0 - 0.08 * k, hash12(float2(scan_row, fr + 9.0)));
 		float n = hash12(floor(pix) + float2(fr * 17.0, fr * 3.0)) - 0.5;
 		col.rgb = max(col.rgb + (n * 0.25 * k + lit * 0.35) * col.a, float3(0.0, 0.0, 0.0));
 	}

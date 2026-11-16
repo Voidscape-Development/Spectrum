@@ -280,6 +280,8 @@ float hex_grid(float2 p, float px, float t)
 	bool first = dot(h.xy, h.xy) < dot(h.zw, h.zw);
 	float2 local = first ? h.xy : h.zw;
 	float2 id = first ? hc.xy : hc.zw + 0.5;
+	// Note: no variable may be called `line`, `point` or `triangle`: they are
+	// HLSL keywords and the effect fails to compile on Direct3D.
 	float2 a = abs(local);
 	// 0 at the centre, 0.5 on the edge.
 	float hd = max(dot(a, float2(0.5, 0.8660254)), a.x);
@@ -294,16 +296,16 @@ float hex_grid(float2 p, float px, float t)
 	float cell = lerp(r, lerp(wave, pulse, 0.5), tw);
 
 	float w = 0.01 + 0.08 * saturate(nz_size / 100.0);
-	float line = 1.0 - smoothstep(w - px * 0.5, w + px * 0.5, edge);
+	float edge_line = 1.0 - smoothstep(w - px * 0.5, w + px * 0.5, edge);
 	// Edges glow a little into the cells and brighten with the pulse.
 	float glow = exp(-max(edge - w, 0.0) / max(w * 2.0, px));
-	float edge_v = saturate(line + 0.35 * glow) * lerp(1.0, 0.4 + 0.6 * pulse, tw);
+	float edge_v = saturate(edge_line + 0.35 * glow) * lerp(1.0, 0.4 + 0.6 * pulse, tw);
 
 	if (nz_hex_style == 1)
-		return cell * (1.0 - line * 0.6);
+		return cell * (1.0 - edge_line * 0.6);
 	if (nz_hex_style == 2)
 		return edge_v;
-	return max(cell * 0.6 * (1.0 - line), edge_v);
+	return max(cell * 0.6 * (1.0 - edge_line), edge_v);
 }
 
 float pattern(float2 p, float2 flow_back, float px, float t)

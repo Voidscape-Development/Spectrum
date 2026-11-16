@@ -5,7 +5,6 @@
 #include "glow.h"
 
 #include <math.h>
-#include "../common/presets.h"
 #include "../common/fx-filter.h"
 
 // Version 1 changed the defaults (see glow_filter_defaults_v1). Filters and
@@ -470,7 +469,6 @@ static obs_properties_t *properties(void *data, bool is_source, enum filter_type
 	obs_property_t *refresh_p = obs_properties_add_float_slider(props, "cache_refresh",
 								    obs_module_text("Cache.Refresh"), 0.0, 60.0, 0.1);
 	obs_property_float_set_suffix(refresh_p, "s");
-	spectrum_presets_properties(props, data ? ((glow_filter_data_t *)data)->context : NULL);
 	return props;
 }
 
