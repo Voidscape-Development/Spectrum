@@ -21,7 +21,6 @@ static void blur_filter_defaults(obs_data_t *settings);
 static void blur_filter_destroy(void *data);
 static uint32_t blur_filter_width(void *data);
 static uint32_t blur_filter_height(void *data);
-static void blur_filter_rename(void *data, calldata_t *call_data);
 static void blur_filter_update(void *data, obs_data_t *settings);
 static void blur_filter_video_render(void *data, gs_effect_t *effect);
 static void blur_filter_video_tick(void *data, float seconds);
@@ -57,8 +56,6 @@ static void apply_effect_mask_source(blur_filter_data_t *filter);
 static void apply_effect_mask_circle(blur_filter_data_t *filter);
 static void effect_mask_load_effect(blur_filter_data_t *filter);
 
-static bool blur_filter_enable_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed);
-static bool blur_filter_disable_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed);
 
 struct obs_source_info spectrum_blur_filter = {.id = "spectrum_blur_filter",
 					       .type = OBS_SOURCE_TYPE_FILTER,
@@ -157,7 +154,6 @@ static void *blur_filter_create(obs_data_t *settings, obs_source_t *source)
 
 	// bzalloc zeroes everything; only non-zero initial state is set here.
 	filter->context = source;
-	filter->hotkey = OBS_INVALID_HOTKEY_PAIR_ID;
 	filter->blur_algorithm = ALGO_NONE;
 	filter->blur_algorithm_last = -1;
 	filter->blur_type = TYPE_NONE;
@@ -175,9 +171,6 @@ static void *blur_filter_create(obs_data_t *settings, obs_source_t *source)
 
 	da_init(filter->kernel);
 	da_init(filter->offset);
-
-	signal_handler_t *sh = obs_source_get_signal_handler(filter->context);
-	signal_handler_connect_ref(sh, "rename", blur_filter_rename, filter);
 
 	// The device type selects D3D vs OpenGL shader variants, so it must be
 	// known before the first update loads any effects.
@@ -200,13 +193,6 @@ static void external_source_free(external_source_t *src)
 static void blur_filter_destroy(void *data)
 {
 	blur_filter_data_t *filter = data;
-
-	signal_handler_t *sh = obs_source_get_signal_handler(filter->context);
-	signal_handler_disconnect(sh, "rename", blur_filter_rename, filter);
-
-	if (filter->hotkey != OBS_INVALID_HOTKEY_PAIR_ID) {
-		obs_hotkey_pair_unregister(filter->hotkey);
-	}
 
 	gs_effect_t *effects[] = {
 		filter->effect,        filter->effect_2,           filter->composite_effect,
@@ -268,7 +254,6 @@ static void blur_filter_destroy(void *data)
 	da_free(filter->offset);
 	da_free(filter->kernel);
 
-	dstr_free(&filter->filter_name);
 	dstr_free(&filter->mask_image_path);
 
 	pthread_mutex_destroy(&filter->sources_mutex);
@@ -285,26 +270,6 @@ static uint32_t blur_filter_height(void *data)
 {
 	struct blur_filter_data *filter = data;
 	return filter->height;
-}
-
-static void blur_filter_rename(void *data, calldata_t *call_data)
-{
-	blur_filter_data_t *filter = data;
-	const char *new_name = calldata_string(call_data, "new_name");
-
-	dstr_copy(&filter->filter_name, new_name);
-	struct dstr enable;
-	struct dstr disable;
-
-	dstr_init_copy(&enable, obs_module_text("BlurFilter.Enable"));
-	dstr_init_copy(&disable, obs_module_text("BlurFilter.Disable"));
-	dstr_cat(&enable, " ");
-	dstr_cat(&enable, new_name);
-	dstr_cat(&disable, " ");
-	dstr_cat(&disable, new_name);
-	obs_hotkey_pair_set_descriptions(filter->hotkey, enable.array, disable.array);
-	dstr_free(&enable);
-	dstr_free(&disable);
 }
 
 /* ------------------------------------------------------------------------
@@ -1868,35 +1833,6 @@ static bool setting_lens_modified(obs_properties_t *props, obs_property_t *p, ob
 	return true;
 }
 
-static bool blur_filter_enable_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed)
-{
-	UNUSED_PARAMETER(id);
-	UNUSED_PARAMETER(hotkey);
-	blur_filter_data_t *filter = data;
-	if (!pressed)
-		return false;
-
-	if (obs_source_enabled(filter->context))
-		return false;
-	obs_source_set_enabled(filter->context, true);
-
-	return true;
-}
-
-static bool blur_filter_disable_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed)
-{
-	UNUSED_PARAMETER(id);
-	UNUSED_PARAMETER(hotkey);
-	blur_filter_data_t *filter = data;
-	if (!pressed)
-		return false;
-	if (!obs_source_enabled(filter->context))
-		return false;
-	obs_source_set_enabled(filter->context, false);
-
-	return true;
-}
-
 /* ------------------------------------------------------------------------
  * Tick
  * --------------------------------------------------------------------- */
@@ -1932,30 +1868,6 @@ static void center_init_task(void *param)
 	bfree(task);
 }
 
-static void register_hotkeys(blur_filter_data_t *filter)
-{
-	obs_source_t *parent = obs_filter_get_parent(filter->context);
-	if (!parent)
-		return;
-
-	const char *filter_name = obs_source_get_name(filter->context);
-	struct dstr enable;
-	struct dstr disable;
-
-	dstr_init_copy(&enable, obs_module_text("BlurFilter.Enable"));
-	dstr_init_copy(&disable, obs_module_text("BlurFilter.Disable"));
-	dstr_cat(&enable, " ");
-	dstr_cat(&enable, filter_name);
-	dstr_cat(&disable, " ");
-	dstr_cat(&disable, filter_name);
-
-	filter->hotkey = obs_hotkey_pair_register_source(parent, "BlurFilter.Enable", enable.array,
-							 "BlurFilter.Disable", disable.array, blur_filter_enable_hotkey,
-							 blur_filter_disable_hotkey, filter, filter);
-	dstr_free(&enable);
-	dstr_free(&disable);
-}
-
 static void blur_filter_video_tick(void *data, float seconds)
 {
 	blur_filter_data_t *filter = data;
@@ -1985,10 +1897,6 @@ static void blur_filter_video_tick(void *data, float seconds)
 		external_source_refresh(filter, &filter->background);
 		external_source_refresh(filter, &filter->vector_source);
 		external_source_refresh(filter, &filter->depth_source);
-	}
-
-	if (filter->hotkey == OBS_INVALID_HOTKEY_PAIR_ID) {
-		register_hotkeys(filter);
 	}
 
 	const uint32_t width = (uint32_t)obs_source_get_base_width(target);
