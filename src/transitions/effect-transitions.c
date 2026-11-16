@@ -37,6 +37,7 @@ static void glitch_defaults(obs_data_t *settings)
 
 static obs_properties_t *glitch_properties(void *data)
 {
+	UNUSED_PARAMETER(data);
 	obs_properties_t *props = obs_properties_create();
 	tr_add_easing_property(props);
 	tr_slider(props, "gt_amount", "Glitch.Amount", 0.0, 500.0, 0.1, "px");
@@ -47,7 +48,6 @@ static obs_properties_t *glitch_properties(void *data)
 	obs_property_set_long_description(p, obs_module_text("Glitch.Switch.Description"));
 	tr_slider(props, "gt_noise", "Glitch.Noise", 0.0, 100.0, 0.1, "%");
 	tr_slider(props, "gt_seed", "Noise.Seed", 0.0, 1000.0, 1.0, NULL);
-	tr_finish_properties(props, data);
 	return props;
 }
 
@@ -96,6 +96,7 @@ static void pixelate_defaults(obs_data_t *settings)
 
 static obs_properties_t *pixelate_properties(void *data)
 {
+	UNUSED_PARAMETER(data);
 	obs_properties_t *props = obs_properties_create();
 	tr_add_easing_property(props);
 	tr_slider(props, "px_size", "Pixelate.Size", 2.0, 512.0, 0.1, "px");
@@ -103,7 +104,6 @@ static obs_properties_t *pixelate_properties(void *data)
 	obs_property_set_long_description(p, obs_module_text("BlurDissolve.Crossfade.Description"));
 	tr_slider(props, "px_center_x", "Gradient.CenterX", 0.0, 100.0, 0.1, "%");
 	tr_slider(props, "px_center_y", "Gradient.CenterY", 0.0, 100.0, 0.1, "%");
-	tr_finish_properties(props, data);
 	return props;
 }
 
@@ -198,7 +198,6 @@ static obs_properties_t *noise_dissolve_properties(void *data)
 	obs_property_set_long_description(p, obs_module_text("NoiseDissolve.Bias.Description"));
 	tr_slider(props, "nd_angle", "Gradient.Angle", -360.0, 360.0, 0.1, "°");
 	tr_add_edge_properties(props, fx, "%", 50.0);
-	tr_finish_properties(props, data);
 	return props;
 }
 

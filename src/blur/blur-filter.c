@@ -8,7 +8,7 @@
 #include "algorithms/temporal.h"
 #include "algorithms/lens.h"
 #include "algorithms/frosted.h"
-#include "../common/presets.h"
+#include "../common/audio-reactive.h"
 
 // How often (seconds) to retry resolving a named source that wasn't found.
 #define SOURCE_RETRY_INTERVAL 1.0f
@@ -1468,7 +1468,7 @@ static obs_properties_t *blur_filter_properties(void *data)
 	obs_properties_add_group(props, "effect_mask_crop", obs_module_text("BlurFilter.EffectMask.CropParameters"),
 				 OBS_GROUP_NORMAL, effect_mask_crop);
 
-	spectrum_presets_properties(props, data ? ((blur_filter_data_t *)data)->context : NULL);
+	spectrum_reactive_properties(props, data ? ((blur_filter_data_t *)data)->context : NULL);
 	return props;
 }
 

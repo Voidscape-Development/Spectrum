@@ -15,7 +15,7 @@
 // rendered, and reset when the source changes size.
 
 #include "../common/fx-filter.h"
-#include "../common/presets.h"
+#include "../common/audio-reactive.h"
 
 #include <graphics/vec4.h>
 #include <util/threading.h>
@@ -741,7 +741,7 @@ static obs_properties_t *time_properties(void *data)
 	obs_properties_add_text(props, "tf_memory", obs_module_text("TimeFx.Memory"), OBS_TEXT_INFO);
 
 	obs_properties_add_bool(props, "tf_dither", obs_module_text("Gradient.Dither"));
-	spectrum_presets_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
+	spectrum_reactive_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 

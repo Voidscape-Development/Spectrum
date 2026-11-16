@@ -8,7 +8,7 @@
 //
 //  * Hotkeys (Settings > Hotkeys, saved with the scene collection like any
 //    source hotkey): an Enable/Disable pair on every filter (bind one key to
-//    both to toggle) and "Apply preset" for each saved preset of the type.
+//    both to toggle).
 //  * React to Audio (audio-reactive.h): every tick, the modulated values are
 //    handed to the instance's own update callback in a private copy of its
 //    settings. The saved settings are never written, so they keep the value
@@ -26,9 +26,6 @@ extern "C" {
 void spectrum_register_source(const struct obs_source_info *info);
 // Removes the tick callback (obs_module_unload).
 void spectrum_hooks_shutdown(void);
-// Re-syncs the preset hotkeys of every instance of the type (call after
-// saving or deleting a preset).
-void spectrum_hooks_presets_changed(const char *unversioned_id);
 
 #ifdef __cplusplus
 }

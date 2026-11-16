@@ -3,7 +3,7 @@
 #include "stroke.h"
 #include "../common/fx-filter.h"
 #include <math.h>
-#include "../common/presets.h"
+#include "../common/audio-reactive.h"
 
 // Version 1 changed the defaults (see stroke_filter_defaults_v1). Filters and
 // sources saved by earlier versions are loaded as version 0, which keeps the
@@ -467,7 +467,7 @@ static obs_properties_t *properties(void *data, bool is_source)
 	obs_property_t *refresh_p = obs_properties_add_float_slider(props, "cache_refresh",
 								    obs_module_text("Cache.Refresh"), 0.0, 60.0, 0.1);
 	obs_property_float_set_suffix(refresh_p, "s");
-	spectrum_presets_properties(props, data ? ((stroke_filter_data_t *)data)->context : NULL);
+	spectrum_reactive_properties(props, data ? ((stroke_filter_data_t *)data)->context : NULL);
 	return props;
 }
 

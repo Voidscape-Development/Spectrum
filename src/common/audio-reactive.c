@@ -197,7 +197,7 @@ static void add_numeric_properties(obs_property_t *list, obs_properties_t *props
 	for (obs_property_t *p = obs_properties_first(props); p; obs_property_next(&p)) {
 		const char *name = obs_property_name(p);
 		if (name && strncmp(name, "spectrum_", 9) == 0)
-			continue; // our own UI (presets, picker, this group)
+			continue; // our own UI (this group)
 		const enum obs_property_type type = obs_property_get_type(p);
 		const char *desc = obs_property_description(p);
 		if (type == OBS_PROPERTY_GROUP) {
@@ -296,6 +296,8 @@ static obs_property_t *add_float(obs_properties_t *props, const char *key, const
 
 void spectrum_reactive_properties(obs_properties_t *props, obs_source_t *source)
 {
+	if (!source || obs_source_get_type(source) == OBS_SOURCE_TYPE_TRANSITION)
+		return;
 	obs_properties_t *group = obs_properties_create();
 	obs_property_t *p;
 

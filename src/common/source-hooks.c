@@ -1,6 +1,5 @@
 #include "source-hooks.h"
 #include "audio-reactive.h"
-#include "presets.h"
 
 #include <util/darray.h>
 #include <util/dstr.h>
@@ -12,40 +11,11 @@
 #define MAX_TYPES 128
 #define HOTKEY_ENABLE "spectrum.enable"
 #define HOTKEY_DISABLE "spectrum.disable"
-#define HOTKEY_PRESET_PREFIX "spectrum.preset."
-#define HOTKEY_UNDO_PREFIX "spectrum.preset_undo."
 
 struct hook_type {
 	struct obs_source_info orig;
 	char id[256]; // as OBS reports it: versioned types get "_v<version>"
 };
-
-struct hook_state;
-
-// "Apply preset" / "Undo preset" pair (OBS only allows hotkey pairs on
-// filters, which are private sources). Bound to one key, it toggles.
-struct preset_hotkey {
-	struct hook_state *state;
-	char *name;
-	obs_hotkey_pair_id id;
-	// Hotkey thread only: the settings before the preset was applied, and
-	// right after (to tell whether it is still applied).
-	obs_data_t *previous;
-	char *applied;
-};
-
-static bool preset_still_applied(struct preset_hotkey *ph, obs_data_t *settings)
-{
-	return ph->previous && ph->applied && strcmp(obs_data_get_json(settings), ph->applied) == 0;
-}
-
-static void forget_previous(struct preset_hotkey *ph)
-{
-	obs_data_release(ph->previous);
-	ph->previous = NULL;
-	bfree(ph->applied);
-	ph->applied = NULL;
-}
 
 struct hook_state {
 	const struct hook_type *type;
@@ -54,7 +24,6 @@ struct hook_state {
 	bool dead;            // destroyed; freed by the next tick
 
 	obs_hotkey_pair_id enable_pair;
-	DARRAY(struct preset_hotkey *) presets;
 
 	spectrum_reactive_t *reactive;
 	obs_data_t *copy; // settings with defaults, handed to update
@@ -94,11 +63,10 @@ static struct hook_state *find_state(void *data)
  * Hotkeys
  * --------------------------------------------------------------------- */
 
-static char *describe(const char *text_key, const char *source_name, const char *preset)
+static char *describe(const char *text_key, const char *source_name)
 {
 	struct dstr s = {0};
 	dstr_copy(&s, obs_module_text(text_key));
-	dstr_replace(&s, "%2", preset ? preset : "");
 	dstr_replace(&s, "%1", source_name ? source_name : "");
 	return s.array;
 }
@@ -125,64 +93,12 @@ static bool disable_pressed(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hot
 	return true;
 }
 
-static bool preset_apply_pressed(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed)
-{
-	UNUSED_PARAMETER(id);
-	UNUSED_PARAMETER(hotkey);
-	struct preset_hotkey *ph = data;
-	if (!pressed)
-		return false;
-	obs_source_t *source = ph->state->source;
-	obs_data_t *settings = obs_source_get_settings(source);
-	// Returning false while applied lets one key bound to both toggle.
-	bool applied = false;
-	if (!preset_still_applied(ph, settings)) {
-		obs_data_t *before = obs_data_create_from_json(obs_data_get_json(settings));
-		if (spectrum_presets_apply(source, ph->name)) {
-			forget_previous(ph);
-			ph->previous = before;
-			ph->applied = bstrdup(obs_data_get_json(settings));
-			applied = true;
-		} else {
-			obs_data_release(before);
-		}
-	}
-	obs_data_release(settings);
-	return applied;
-}
-
-static bool preset_undo_pressed(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed)
-{
-	UNUSED_PARAMETER(id);
-	UNUSED_PARAMETER(hotkey);
-	struct preset_hotkey *ph = data;
-	if (!pressed || !ph->previous)
-		return false;
-	obs_source_t *source = ph->state->source;
-	obs_data_t *settings = obs_source_get_settings(source);
-	obs_data_clear(settings);
-	obs_data_apply(settings, ph->previous);
-	obs_source_update(source, settings);
-	obs_data_release(settings);
-	forget_previous(ph);
-	return true;
-}
-
-static void set_preset_descriptions(struct preset_hotkey *ph, const char *source_name)
-{
-	char *apply = describe("Hotkeys.Preset", source_name, ph->name);
-	char *undo = describe("Hotkeys.PresetUndo", source_name, ph->name);
-	obs_hotkey_pair_set_descriptions(ph->id, apply, undo);
-	bfree(apply);
-	bfree(undo);
-}
-
 static void set_enable_descriptions(struct hook_state *s, const char *name)
 {
 	if (s->enable_pair == OBS_INVALID_HOTKEY_PAIR_ID)
 		return;
-	char *on = describe("Hotkeys.Enable", name, NULL);
-	char *off = describe("Hotkeys.Disable", name, NULL);
+	char *on = describe("Hotkeys.Enable", name);
+	char *off = describe("Hotkeys.Disable", name);
 	obs_hotkey_pair_set_descriptions(s->enable_pair, on, off);
 	bfree(on);
 	bfree(off);
@@ -194,77 +110,12 @@ static void register_enable_pair(struct hook_state *s)
 	if (obs_source_get_type(s->source) != OBS_SOURCE_TYPE_FILTER)
 		return;
 	const char *name = obs_source_get_name(s->source);
-	char *on = describe("Hotkeys.Enable", name, NULL);
-	char *off = describe("Hotkeys.Disable", name, NULL);
+	char *on = describe("Hotkeys.Enable", name);
+	char *off = describe("Hotkeys.Disable", name);
 	s->enable_pair = obs_hotkey_pair_register_source(s->source, HOTKEY_ENABLE, on, HOTKEY_DISABLE, off,
 							 enable_pressed, disable_pressed, s, s);
 	bfree(on);
 	bfree(off);
-}
-
-static void free_preset_hotkey(struct preset_hotkey *ph)
-{
-	obs_hotkey_pair_unregister(ph->id);
-	forget_previous(ph);
-	bfree(ph->name);
-	bfree(ph);
-}
-
-struct name_list {
-	DARRAY(char *) names;
-};
-
-static void collect_name(void *param, const char *name)
-{
-	struct name_list *list = param;
-	char *copy = bstrdup(name);
-	da_push_back(list->names, &copy);
-}
-
-// Registers a hotkey for each saved preset of the type, and unregisters
-// those of deleted presets.
-static void sync_preset_hotkeys(struct hook_state *s)
-{
-	struct name_list list = {0};
-	spectrum_presets_enum(obs_source_get_unversioned_id(s->source), collect_name, &list);
-
-	for (size_t i = s->presets.num; i-- > 0;) {
-		bool keep = false;
-		for (size_t j = 0; j < list.names.num && !keep; j++)
-			keep = strcmp(list.names.array[j], s->presets.array[i]->name) == 0;
-		if (!keep) {
-			free_preset_hotkey(s->presets.array[i]);
-			da_erase(s->presets, i);
-		}
-	}
-	const char *source_name = obs_source_get_name(s->source);
-	for (size_t j = 0; j < list.names.num; j++) {
-		const char *name = list.names.array[j];
-		bool have = false;
-		for (size_t i = 0; i < s->presets.num && !have; i++)
-			have = strcmp(s->presets.array[i]->name, name) == 0;
-		if (!have && *name) {
-			struct preset_hotkey *ph = bzalloc(sizeof(*ph));
-			ph->state = s;
-			ph->name = bstrdup(name);
-			struct dstr apply = {0}, undo = {0};
-			dstr_printf(&apply, "%s%s", HOTKEY_PRESET_PREFIX, name);
-			dstr_printf(&undo, "%s%s", HOTKEY_UNDO_PREFIX, name);
-			ph->id = obs_hotkey_pair_register_source(s->source, apply.array, "", undo.array, "",
-								 preset_apply_pressed, preset_undo_pressed, ph, ph);
-			dstr_free(&apply);
-			dstr_free(&undo);
-			if (ph->id == OBS_INVALID_HOTKEY_PAIR_ID) {
-				bfree(ph->name);
-				bfree(ph);
-			} else {
-				set_preset_descriptions(ph, source_name);
-				da_push_back(s->presets, &ph);
-			}
-		}
-		bfree(list.names.array[j]);
-	}
-	da_free(list.names);
 }
 
 static void source_renamed(void *param, calldata_t *cd)
@@ -272,11 +123,8 @@ static void source_renamed(void *param, calldata_t *cd)
 	struct hook_state *s = param;
 	const char *name = calldata_string(cd, "new_name");
 	pthread_mutex_lock(&mutex);
-	if (!s->dead) {
+	if (!s->dead)
 		set_enable_descriptions(s, name);
-		for (size_t i = 0; i < s->presets.num; i++)
-			set_preset_descriptions(s->presets.array[i], name);
-	}
 	pthread_mutex_unlock(&mutex);
 }
 
@@ -312,7 +160,6 @@ static void hooks_tick(void *param, float seconds)
 		if (s->dead) {
 			spectrum_reactive_destroy(s->reactive);
 			obs_data_release(s->copy);
-			da_free(s->presets);
 			bfree(s);
 			da_erase(states, i);
 		}
@@ -362,7 +209,6 @@ static void *hook_create(obs_data_t *settings, obs_source_t *source)
 	pthread_mutex_lock(&mutex);
 	da_push_back(states, &s);
 	register_enable_pair(s);
-	sync_preset_hotkeys(s);
 	// The type's create ran its own update with the plain settings.
 	s->force = spectrum_reactive_configure(s->reactive, settings);
 	pthread_mutex_unlock(&mutex);
@@ -407,9 +253,6 @@ static void hook_destroy(void *data)
 		if (s->enable_pair != OBS_INVALID_HOTKEY_PAIR_ID)
 			obs_hotkey_pair_unregister(s->enable_pair);
 		s->enable_pair = OBS_INVALID_HOTKEY_PAIR_ID;
-		for (size_t i = 0; i < s->presets.num; i++)
-			free_preset_hotkey(s->presets.array[i]);
-		da_resize(s->presets, 0);
 		spectrum_reactive_stop(s->reactive);
 	}
 	pthread_mutex_unlock(&mutex);
@@ -480,22 +323,8 @@ void spectrum_hooks_shutdown(void)
 			continue; // still alive: leave it to its destroy wrapper
 		spectrum_reactive_destroy(s->reactive);
 		obs_data_release(s->copy);
-		da_free(s->presets);
 		bfree(s);
 		da_erase(states, i--);
-	}
-	pthread_mutex_unlock(&mutex);
-}
-
-void spectrum_hooks_presets_changed(const char *unversioned_id)
-{
-	if (!started || !unversioned_id)
-		return;
-	pthread_mutex_lock(&mutex);
-	for (size_t i = 0; i < states.num; i++) {
-		struct hook_state *s = states.array[i];
-		if (!s->dead && strcmp(obs_source_get_unversioned_id(s->source), unversioned_id) == 0)
-			sync_preset_hotkeys(s);
 	}
 	pthread_mutex_unlock(&mutex);
 }

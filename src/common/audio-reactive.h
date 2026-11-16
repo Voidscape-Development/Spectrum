@@ -4,7 +4,7 @@
 // filter or source from the level (or the beats) of an audio source.
 //
 // The configuration lives in the source's own settings (spectrum_ar_*
-// keys, added to every Spectrum properties view by spectrum_presets_properties).
+// keys, added to every Spectrum properties view by spectrum_reactive_properties()).
 // The modulated values are never written into the source's settings: the
 // source hooks (source-hooks.c) hand the source's update callback a private
 // copy of its settings with the modulated values in place, so the value the
@@ -25,7 +25,8 @@ void spectrum_reactive_stop(spectrum_reactive_t *r);
 
 void spectrum_reactive_defaults(obs_data_t *settings);
 // Adds the "React to Audio" group. Call after the source's own properties:
-// its numeric properties are offered as targets.
+// its numeric properties are offered as targets. Does nothing for a NULL
+// source (properties requested without an instance) or a transition.
 void spectrum_reactive_properties(obs_properties_t *props, obs_source_t *source);
 
 // Reads the configuration from the source's settings. Returns true when

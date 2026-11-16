@@ -63,7 +63,6 @@ static obs_properties_t *gradient_wipe_properties(void *data)
 	obs_properties_add_bool(props, "gw_reverse", obs_module_text("Transition.Reverse"));
 
 	tr_add_edge_properties(props, fx, "px", 1000.0);
-	tr_finish_properties(props, data);
 	return props;
 }
 

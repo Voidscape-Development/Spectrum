@@ -158,12 +158,12 @@ static void blur_dissolve_defaults(obs_data_t *settings)
 
 static obs_properties_t *blur_dissolve_properties(void *data)
 {
+	UNUSED_PARAMETER(data);
 	obs_properties_t *props = obs_properties_create();
 	tr_add_easing_property(props);
 	tr_slider(props, "bd_radius", "BlurDissolve.Radius", 0.0, 200.0, 0.1, "px");
 	obs_property_t *p = tr_slider(props, "bd_crossfade", "BlurDissolve.Crossfade", 0.0, 100.0, 0.1, "%");
 	obs_property_set_long_description(p, obs_module_text("BlurDissolve.Crossfade.Description"));
-	tr_finish_properties(props, data);
 	return props;
 }
 

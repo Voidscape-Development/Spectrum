@@ -110,10 +110,9 @@ Scene transitions that blend in linear light, dither their output, keep HDR valu
 - **Pixelate:** the pixels grow to a peak, then resolve into the new scene.
 - **Noise Dissolve:** the new scene burns through animated noise with a glowing edge (a fire gradient by default), optionally travelling in one direction.
 
-### Presets, transitions and performance
-- **Presets:** every Spectrum filter, source and transition can save, load and delete named presets.
+### Hotkeys, React to Audio and performance
 - **React to Audio:** every Spectrum filter and source has a "React to Audio" group. Pick an audio source and up to two of the filter's own numeric settings with a From (silence) and To (full level) value, or add the amount to the value you set. Silence and full levels, attack and release shape the response; "Kick on Beats" jumps on transients such as drum hits instead and decays. The modulated values are never written into the filter's saved settings, so the values you set stay as they are.
-- **Hotkeys:** every Spectrum filter gets Enable and Disable hotkeys (bind one key to both to toggle), and every filter and source gets "Apply preset" and "Undo preset" hotkeys for each saved preset of its kind, in Settings > Hotkeys. Bindings are saved with the scene collection.
+- **Hotkeys:** every Spectrum filter gets Enable and Disable hotkeys (bind one key to both to toggle) in Settings > Hotkeys. Bindings are saved with the scene collection.
 - **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Stylize, Retro, Composite and Warp filters interpolate between two filter states.
 - **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame (marching dashes keep moving on a cached stroke).
 

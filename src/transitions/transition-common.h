@@ -53,14 +53,13 @@ bool tr_audio_render(void *data, uint64_t *ts_out, struct obs_source_audio_mix *
 		     size_t sample_rate);
 enum gs_color_space tr_video_get_color_space(void *data, size_t count, const enum gs_color_space *preferred_spaces);
 
-// Common settings: easing first, the edge glow group, presets last.
+// Common settings: easing first, then the edge glow group.
 void tr_defaults_common(obs_data_t *settings);
 void tr_add_easing_property(obs_properties_t *props);
 // Edge glow/border settings (tr_edge_*), filled with a color or the
 // gradient engine. `width_suffix` is the unit of tr_edge_width ("px" or "%").
 void tr_edge_defaults(obs_data_t *settings, int mode, double width, double intensity);
 void tr_add_edge_properties(obs_properties_t *props, fx_filter_t *fx, const char *width_suffix, double max_width);
-void tr_finish_properties(obs_properties_t *props, void *data);
 
 obs_property_t *tr_slider(obs_properties_t *props, const char *key, const char *text, double min, double max,
 			  double step, const char *suffix);

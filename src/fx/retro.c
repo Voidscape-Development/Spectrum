@@ -11,7 +11,7 @@
 
 #include <graphics/vec4.h>
 #include <math.h>
-#include "../common/presets.h"
+#include "../common/audio-reactive.h"
 
 enum retro_palette {
 	PAL_OFF = 0,
@@ -514,7 +514,7 @@ static obs_properties_t *retro_properties(void *data)
 	group(props, "rt_vhs_group", "Retro.Vhs", g);
 
 	obs_properties_add_bool(props, "rt_dither", obs_module_text("Gradient.Dither"));
-	spectrum_presets_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
+	spectrum_reactive_properties(props, data ? ((fx_filter_t *)data)->context : NULL);
 	return props;
 }
 
