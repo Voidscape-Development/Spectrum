@@ -173,12 +173,7 @@ target_sources(
 )
 
 # Shared infrastructure: Enable/Disable hotkeys for every filter
-target_sources(
-  ${CMAKE_PROJECT_NAME}
-  PRIVATE
-    src/common/source-hooks.c
-    src/common/source-hooks.h
-)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/common/source-hooks.c src/common/source-hooks.h)
 
 # Retro (oil paint, ASCII, palettes, VHS)
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/retro.c)
