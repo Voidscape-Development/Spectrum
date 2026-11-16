@@ -35,16 +35,19 @@ float4 PSDraw(VertData v_in) : TARGET
 	float threshold = saturate(ls_threshold / 100.0);
 
 	// Search back towards the light for the nearest part of the source.
+	// SampleLevel keeps this a real loop on Direct3D: with Sample the
+	// compiler unrolls all MAX_STEPS iterations, which stalls the graphics
+	// thread for a very long time and takes OBS down.
 	float depth = -1.0;
 	float4 hit = float4(0.0, 0.0, 0.0, 0.0);
 	for (int i = 1; i <= MAX_STEPS; i++) {
 		if (float(i) > steps)
 			break;
 		float k = float(i) * step_px;
-		float4 s = fx_input_border(v_in.uv - dir_px * k * px_to_uv);
+		float4 s = fx_input_border_lod(v_in.uv - dir_px * k * px_to_uv);
 		if (s.a >= threshold) {
 			// Refine between the last miss and this hit for smooth edges.
-			float prev = fx_input_border(v_in.uv - dir_px * (k - step_px) * px_to_uv).a;
+			float prev = fx_input_border_lod(v_in.uv - dir_px * (k - step_px) * px_to_uv).a;
 			float f = saturate((threshold - prev) / max(s.a - prev, 1e-4));
 			depth = k - step_px + f * step_px;
 			hit = s;
