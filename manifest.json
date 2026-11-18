@@ -1,0 +1,18 @@
+{
+    "display_name": "Spectrum",
+    "id": "fce1dbd1-10bd-4b85-93d1-377c908fe36e",
+    "version": "1.0.0",
+    "authors": [
+        "Voidscape Development"
+    ],
+    "name": "spectrum",
+    "description": "Spectrum is a collection of video filters and sources for OBS Studio.",
+    "long_description": "Spectrum is a collection of video filters and sources for OBS Studio. Everything that draws smooth tones works in float and dithers its output, so gradients, glows and grades don't band.",
+    "urls": {
+        "repository": "https://github.com/Voidscape-Development/Spectrum",
+        "website": "https://github.com/Voidscape-Development/Spectrum",
+        "support": "https://github.com/Voidscape-Development/Spectrum/issues"
+    },
+    "has_banner": false,
+    "has_icon": false
+}
