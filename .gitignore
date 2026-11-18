@@ -16,6 +16,7 @@
 !LICENSE
 !NOTICE
 !README.md
+!manifest.json
 
 # Exclude lock files
 *.lock.json
