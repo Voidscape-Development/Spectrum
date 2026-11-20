@@ -679,7 +679,7 @@ static bool setting_stroke_position_modified(void *data, obs_properties_t *props
 					     obs_data_t *settings)
 {
 	UNUSED_PARAMETER(p);
-	bool is_source = data;
+	bool is_source = data != NULL;
 
 	enum stroke_position position = (enum stroke_position)obs_data_get_int(settings, "stroke_position");
 	enum padding_type paddingType = (enum padding_type)obs_data_get_int(settings, "stroke_padding");

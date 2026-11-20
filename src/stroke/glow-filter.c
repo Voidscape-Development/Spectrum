@@ -671,7 +671,7 @@ static bool setting_fill_type_modified(obs_properties_t *props, obs_property_t *
 static bool setting_glow_position_modified(void *data, obs_properties_t *props, obs_property_t *p, obs_data_t *settings)
 {
 	UNUSED_PARAMETER(p);
-	bool is_source = data;
+	bool is_source = data != NULL;
 
 	enum glow_position position = (enum glow_position)obs_data_get_int(settings, "glow_position");
 	enum padding_type paddingType = (enum padding_type)obs_data_get_int(settings, "glow_padding");
