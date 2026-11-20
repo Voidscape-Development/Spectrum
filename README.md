@@ -19,8 +19,10 @@ Blur a source using one of several algorithms, then limit it with an effect mask
 ### Spectrum Stroke, Spectrum Glow and Spectrum Shadow (filters and sources)
 - **Stroke:** an inner or outer outline, or repeating contours, filled with a color, image or source.
   Strokes and contours can be **dashed** or **dotted** (square or round dash ends, offset, and an animated "marching ants" speed). Dashes follow every outline of text and logos: each outline is traced and measured along its length, and the dashes are evened out so closed outlines have no seam.
+- **Corners:** draw only viewfinder-style brackets at the corners. Brackets go on a rectangle (the source frame or the box around its content), or on the corners of every outline of text and logos, found on the GPU (angle and detection radius). Arm lengths are set separately for horizontal and vertical arms, in pixels or percent, with sharp (mitred) or round bends, square, round or fading arm ends, per-corner switches, and animated pulsing and sliding along the outline.
 - **Glow:** an inner or outer glow with adjustable size, intensity, blur type and fill.
 - **Shadow:** an inner or outer shadow with a light angle, distance, size and fill.
+- **Corner brackets** for glows and shadows too: either keep the effect only around the corners, or cast it from the corner brackets of the shape.
 
 Each one is available as a filter on a source, or as a standalone source that draws the effect from another source.
 

@@ -272,6 +272,19 @@ void glow_render_cropped_output(glow_filter_data_t *data)
 	}
 }
 
+// Corner bracket uniforms (see corners.h): their coverage, applied to the
+// glow or to the shape mask that casts it.
+static void bind_corners(glow_filter_data_t *data, gs_effect_t *effect)
+{
+	gs_eparam_t *mask = gs_effect_get_param_by_name(effect, "corner_mask");
+	const bool on = data->corner_mask && mask;
+	if (on)
+		gs_effect_set_texture(mask, data->corner_mask);
+	gs_effect_set_float(gs_effect_get_param_by_name(effect, "corner_use"), on ? (float)data->corners.glow : 0.0f);
+	gs_effect_set_float(gs_effect_get_param_by_name(effect, "corner_inner"),
+			    data->glow_position == GLOW_POSITION_INNER ? 1.0f : 0.0f);
+}
+
 void render_glow_alpha_mask(glow_filter_data_t *data)
 {
 	gs_effect_t *effect = data->effect_glow;
@@ -279,6 +292,13 @@ void render_glow_alpha_mask(glow_filter_data_t *data)
 	if (!effect || !input_texture) {
 		return;
 	}
+
+	struct vec4 frame;
+	vec4_set(&frame, (float)data->pad_l, (float)data->pad_t, (float)(data->width - data->pad_r),
+		 (float)(data->height - data->pad_b));
+	data->corner_mask =
+		corners_render_mask(&data->corners, input_texture, data->width, data->height, data->threshold, &frame);
+	bind_corners(data, effect);
 
 	gs_eparam_t *image = gs_effect_get_param_by_name(effect, "image");
 	gs_effect_set_texture(image, input_texture);
@@ -338,6 +358,7 @@ void render_glow_filter(glow_filter_data_t *data)
 	if (data->param_threshold) {
 		gs_effect_set_float(data->param_threshold, data->threshold);
 	}
+	bind_corners(data, effect);
 
 	// Render the fill source. If it is missing (not found, removed or no
 	// size), fall back to a transparent color fill rather than skipping the

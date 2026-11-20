@@ -42,6 +42,22 @@ sampler_state padSampler {
 	BorderColor = 00000000;
 };
 
+// Corner brackets (see corners-common.effect): their coverage, applied to
+// the glow (corner_use 1) or to the shape that casts it (2).
+uniform texture2d corner_mask;
+uniform float corner_use = 0.0;
+uniform float corner_inner = 0.0;
+
+// m is the shape mask (blurred for the glow); inner glows grow where it is
+// low.
+float corner_apply(float m, float2 uv, float use)
+{
+	if (abs(corner_use - use) > 0.5)
+		return m;
+	float c = corner_mask.SampleLevel(textureSampler, uv, 0.0).r;
+	return corner_inner > 0.5 ? 1.0 - (1.0 - m) * c : m * c;
+}
+
 struct VertData
 {
 	float4 pos : POSITION;
@@ -125,7 +141,7 @@ float4 drawOutput(VertData v_in) : TARGET
 float4 mainImageThresholdMask(VertData v_in) : TARGET
 {
 	float4 color = image.Sample(textureSampler, v_in.uv);
-	return float4(clamp(color.a / max(threshold, 0.0001), 0.0, 1.0), 0.0, 0.0, 1.0);
+	return float4(corner_apply(clamp(color.a / max(threshold, 0.0001), 0.0, 1.0), v_in.uv, 2.0), 0.0, 0.0, 1.0);
 }
 
 // Straight-alpha "a over b".
@@ -147,7 +163,7 @@ float4 fill_from_source(float2 uv)
 // the output must be straight alpha too (OBS blends it with SRCALPHA).
 float4 outer_glow(VertData v_in, float4 fill)
 {
-	float mask = glow_mask.Sample(textureSampler, v_in.uv - offset).r;
+	float mask = corner_apply(glow_mask.Sample(textureSampler, v_in.uv - offset).r, v_in.uv - offset, 1.0);
 	float4 color = image.Sample(textureSampler, v_in.uv);
 	// Gradient start at the source's edge (where the blurred mask is about
 	// half), end where the glow fades out.
@@ -165,6 +181,7 @@ float4 inner_glow(VertData v_in, float4 fill)
 	float3 gamma_i = float3(0.454545f, 0.454545f, 0.454545f);
 
 	float4 mask_col = glow_mask.Sample(textureSampler, v_in.uv - offset);
+	mask_col.r = corner_apply(mask_col.r, v_in.uv - offset, 1.0);
 	float4 color = image.Sample(textureSampler, v_in.uv);
 	// Gradient start at the edge (mask about half), end deep inside.
 	if (fill_gradient > 0.5)

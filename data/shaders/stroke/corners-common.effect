@@ -1,0 +1,435 @@
+// ---------------------------------------------------------------------------
+// Corner brackets (included by jump-flood-common.effect)
+//
+// The "Corners" line style keeps only the parts of a stroke, glow or shadow
+// around corners, like the brackets of a camera viewfinder. Every pixel is
+// mapped to a point on the outline (its nearest edge point), and that point's
+// distance along the outline from the middle of the nearest bracket is
+// compared with the arm length.
+//
+// Bounds mode uses a rectangle as the outline (the source frame, or the box
+// around its content), and the stroke follows that rectangle too. Contour
+// mode finds the corners of every outline of the source on the outlines the
+// dashes trace (see below):
+//
+// 1. The turn at every contour cell: the angle between the chords to the
+//    points corner_radius px behind and ahead along the outline.
+// 2. Corners: turns of at least corner_angle that are the largest within
+//    the radius either way.
+// 3. Pointer jumping along the outline links every cell to the last corner
+//    behind it and the next one ahead.
+//
+// Brackets slide by a phase in segments (corner to next corner), so on every
+// outline they travel from one corner to the next in the same time.
+// ---------------------------------------------------------------------------
+
+uniform float corner_enabled = 0.0;
+uniform float corner_mode = 0.0;                    // 0 rectangle, 1 contour corners
+uniform float4 corner_frame = {0.0, 0.0, 1.0, 1.0}; // source frame (min, max), px
+uniform float corner_content = 0.0;                 // 1: use the content box below
+uniform texture2d corner_bounds;                    // 1x1 content box (min, max), px
+uniform float2 corner_arm = {40.0, 40.0};           // horizontal, vertical arms
+uniform float corner_pct = 0.0;                     // arms are fractions of the edge/outline
+uniform float corner_sharp = 1.0;                   // sharp bends, else round
+uniform float corner_cap = 0.0;                     // arm ends: 0 square, 1 round, 2 fade
+uniform float4 corner_on = {1.0, 1.0, 1.0, 1.0};    // TL, TR, BR, BL
+uniform float corner_phase = 0.0;                   // slide, fraction of a segment
+uniform float corner_cycle = 0.0;                   // slide, whole segments (mod 4)
+uniform float corner_angle = 0.785;                 // smallest turn at a corner, radians
+uniform float corner_radius = 6.0;                  // detection radius, px
+uniform texture2d corner_mark;                      // (corner?, angle behind, angle ahead, turn)
+uniform texture2d corner_next;                      // link pass input
+uniform texture2d corner_link;                      // (corner behind, corner ahead)
+uniform float link_ahead = 1.0;
+uniform float bounds_init = 0.0;
+uniform float2 bounds_src = {1.0, 1.0};
+
+#define CORNER_NONE 1.0e9
+#define CORNER_WALK 160
+
+// Texels of the arc sized textures. (OpenGL can't take textures as function
+// arguments with their samplers, so one helper each.)
+float2 corner_uv(float2 cell)
+{
+	return (cell + 0.5) / arc_size;
+}
+
+float4 corner_mark_at(float2 cell)
+{
+	return corner_mark.SampleLevel(sdfSampler, corner_uv(cell), 0.0);
+}
+
+float4 corner_link_at(float2 cell)
+{
+	return corner_link.SampleLevel(sdfSampler, corner_uv(cell), 0.0);
+}
+
+float4 corner_arc_at(float2 cell)
+{
+	return arc_field.SampleLevel(sdfSampler, corner_uv(cell), 0.0);
+}
+
+float4 corner_rect()
+{
+	return corner_content > 0.5 ? corner_bounds.SampleLevel(sdfSampler, float2(0.5, 0.5), 0.0) : corner_frame;
+}
+
+// Whether the bracket of corner k (0 TL, 1 TR, 2 BR, 3 BL) is on.
+float corner_on_at(float k)
+{
+	return dot(corner_on, saturate(1.0 - abs(float4(0.0, 1.0, 2.0, 3.0) - k)));
+}
+
+float corner_quadrant(float2 p, float4 rect)
+{
+	float2 c = 0.5 * (rect.xy + rect.zw);
+	return p.y < c.y ? (p.x < c.x ? 0.0 : 1.0) : (p.x < c.x ? 3.0 : 2.0);
+}
+
+// How far (px) a point s px along a segment of length L lies past the arm
+// ends of the nearest bracket that is on (en): the brackets of the corner
+// before the segment's start, its start and its end corner, slid by the
+// phase.
+float corner_beyond(float s, float L, float A, float3 en)
+{
+	float3 d = abs(s - (corner_phase + float3(-1.0, 0.0, 1.0)) * L) - A;
+	d = d * en + (1.0 - en) * CORNER_NONE;
+	return min(min(d.x, d.y), d.z);
+}
+
+// Bounds mode: (beyond, arm) at the point of the rectangle nearest coord.
+float2 corner_rect_ea(float2 coord, float4 rect)
+{
+	float2 size = rect.zw - rect.xy;
+	if (size.x <= 0.0 || size.y <= 0.0)
+		return float2(CORNER_NONE, 1.0);
+	float2 c = clamp(coord, rect.xy, rect.zw);
+	// Distances to the top, right, bottom and left edges; segments run
+	// clockwise from the top left corner.
+	float4 e = float4(c.y - rect.y, rect.z - c.x, rect.w - c.y, c.x - rect.x);
+	float m = min(min(e.x, e.y), min(e.z, e.w));
+	float i = 3.0;
+	float s = rect.w - c.y;
+	if (e.x <= m) {
+		i = 0.0;
+		s = c.x - rect.x;
+	} else if (e.y <= m) {
+		i = 1.0;
+		s = c.y - rect.y;
+	} else if (e.z <= m) {
+		i = 2.0;
+		s = rect.z - c.x;
+	}
+	float horiz = 1.0 - fmod(i, 2.0);
+	float L = horiz > 0.5 ? size.x : size.y;
+	float A = horiz > 0.5 ? corner_arm.x : corner_arm.y;
+	A *= corner_pct > 0.5 ? L : 1.0;
+	// Brackets keep their own corner's switch as they travel round.
+	float3 k = fmod(i + float3(3.0, 4.0, 5.0) - corner_cycle, 4.0);
+	float3 en = float3(corner_on_at(k.x), corner_on_at(k.y), corner_on_at(k.z));
+	return float2(corner_beyond(s, L, A, en), A);
+}
+
+// Bounds mode: signed distance to the rectangle. Round bends round the
+// outside of the bracket: outer strokes (side 1) are round by nature, inner
+// ones (side -1) round the rectangle's corners by the stroke width.
+float corner_rect_sd(float2 coord, float4 rect, float side)
+{
+	float2 half_size = 0.5 * (rect.zw - rect.xy);
+	float2 q = abs(coord - 0.5 * (rect.xy + rect.zw)) - half_size;
+	if (corner_sharp > 0.5)
+		return max(q.x, q.y);
+	float r = side < 0.0 ? clamp(stroke_extent, 0.0, min(half_size.x, half_size.y)) : 0.0;
+	q += r;
+	return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+// Contour mode: (beyond, arm, signed distance) for a pixel at coord whose
+// nearest edge point is p, with sd mitred at sharp bends.
+float3 corner_contour(float2 coord, float2 p, float sd, float side)
+{
+	float4 cc = contour_cell(p);
+	if (cc.x < 0.0)
+		return float3(CORNER_NONE, 1.0, sd);
+	float4 lk = corner_link_at(cc.xy);
+	// The corner behind (P, or this cell) and the one ahead (N).
+	float2 P = corner_mark_at(cc.xy).x > 0.5 ? cc.xy : lk.xy;
+	float2 N = lk.zw;
+	if (P.x < 0.0 && N.x < 0.0)
+		return float3(CORNER_NONE, 1.0, sd);
+	float4 rect = corner_rect();
+	// Arc lengths decrease going ahead.
+	float uP = corner_arc_at(P).x;
+	float uN = corner_arc_at(N).x;
+	float total = cc.w;
+	float2 d = P.x >= 0.0 && N.x >= 0.0 && !same_cell(P, N) ? N - P : corner_arc_at(cc.xy).zw;
+	float A = abs(d.x) >= abs(d.y) ? corner_arm.x : corner_arm.y;
+	A *= corner_pct > 0.5 ? (total > 0.0 ? total : 2.0 * (uv_size.x + uv_size.y)) : 1.0;
+	float onP = P.x >= 0.0 ? corner_on_at(corner_quadrant(P, rect)) : 0.0;
+	float onN = N.x >= 0.0 ? corner_on_at(corner_quadrant(N, rect)) : 0.0;
+	// Distances along the outline to the corners behind and ahead.
+	float dP;
+	float dN;
+	float e;
+	if (total > 0.0) {
+		float L = fmod(uP - uN + 2.0 * total, total);
+		L = L > 0.5 ? L : total;
+		// Points just behind P (within its cell) are slightly negative.
+		dP = fmod(uP - cc.z + 2.0 * total, total);
+		dP -= dP > 0.5 * (L + total) ? total : 0.0;
+		dN = L - dP;
+		float onB = corner_on_at(corner_quadrant(corner_link_at(P).xy, rect));
+		e = corner_beyond(dP, L, A, float3(onB, onP, onN));
+	} else {
+		// Open outline (rare): brackets either side, without sliding.
+		dP = P.x >= 0.0 ? uP - cc.z : CORNER_NONE;
+		dN = N.x >= 0.0 ? cc.z - uN : CORNER_NONE;
+		e = min(onP > 0.5 ? abs(dP) - A : CORNER_NONE, onN > 0.5 ? abs(dN) - A : CORNER_NONE);
+	}
+
+	// Mitre the side of the nearer corner that turns away from the pixel,
+	// cut off (bevelled) at twice the band's reach like SVG's miter limit.
+	float2 C = abs(dP) <= abs(dN) ? P : N;
+	if (corner_sharp > 0.5 && C.x >= 0.0 && min(abs(dP), abs(dN)) <= corner_radius + 1.0) {
+		float4 mk = corner_mark_at(C);
+		float2 d1 = float2(cos(mk.y), sin(mk.y));
+		float2 d2 = float2(cos(mk.z), sin(mk.z));
+		float sds = side * sd;
+		// The inside lies right of the outline: outward normals (d.y, -d.x).
+		float2 n1 = side * float2(d1.y, -d1.x);
+		float2 n2 = side * float2(d2.y, -d2.x);
+		float2 v = coord - p;
+		float m = max(max(dot(v, n1), dot(v, n2)), 0.5 * dot(v, normalize(n1 + n2 + 1.0e-6)));
+		if ((d1.x * d2.y - d1.y * d2.x) * side > 0.0 && sds > 0.0)
+			sd = side * min(sds, m);
+	}
+	return float3(e, A, sd);
+}
+
+// Corner brackets for a pixel at coord with nearest edge point p and signed
+// distance sd, for a band on `side` (1 outside, -1 inside): (how far past
+// the arm ends, arm length, signed distance to use). Everything is kept
+// when the style is off.
+float3 corner_eval(float2 coord, float2 p, float sd, float side)
+{
+	if (corner_enabled < 0.5)
+		return float3(-CORNER_NONE, 1.0, sd);
+	if (corner_mode < 0.5) {
+		float4 rect = corner_rect();
+		return float3(corner_rect_ea(coord, rect), corner_rect_sd(coord, rect, side));
+	}
+	return corner_contour(coord, p, sd, side);
+}
+
+// Coverage of the bracket arms (ea from corner_eval), `n` px across from the
+// middle of a band `h` px half wide.
+float corner_cov(float2 ea, float n, float h)
+{
+	if (corner_cap > 1.5)
+		return saturate(-ea.x / max(0.5 * ea.y, 1.0));
+	if (corner_cap > 0.5 && h > 0.0) {
+		float e = ea.x + h;
+		return e > 0.0 ? edge_cov(h - length(float2(e, n)), 1.0) : 1.0;
+	}
+	return edge_cov(-ea.x, 1.0);
+}
+
+// The shape's own mask `m`, or the rectangle in Bounds mode.
+float corner_shape(float sd, float m)
+{
+	return corner_enabled > 0.5 && corner_mode < 0.5 ? edge_cov(-sd, 1.0) : m;
+}
+
+// --- Content box: min/max of the pixels at or above the threshold, reduced
+// 8x8 per pass (bounds_src is the size of the pass's input).
+float4 PSBoundsReduce(VertData v_in) : TARGET
+{
+	float2 base = floor(v_in.uv * ceil(bounds_src / 8.0)) * 8.0;
+	float4 r = float4(CORNER_NONE, CORNER_NONE, -CORNER_NONE, -CORNER_NONE);
+	float level = seed_level();
+	for (int y = 0; y < 8; y++) {
+		for (int x = 0; x < 8; x++) {
+			float2 t = base + float2(float(x), float(y));
+			float2 uv = (t + 0.5) / bounds_src;
+			if (t.x < bounds_src.x && t.y < bounds_src.y) {
+				if (bounds_init > 0.5) {
+					if (image.SampleLevel(sdfSampler, uv, 0.0).a >= level)
+						r = float4(min(r.xy, t), max(r.zw, t + 1.0));
+				} else {
+					float4 b = arc_state.SampleLevel(sdfSampler, uv, 0.0);
+					r = float4(min(r.xy, b.xy), max(r.zw, b.zw));
+				}
+			}
+		}
+	}
+	return r;
+}
+
+// --- Corner detection (contour mode).
+
+// The point `dist` px along the outline from cell, ahead or behind.
+float2 corner_walk(float2 cell, float ahead, float dist)
+{
+	ArcCell c = arc_cell(cell);
+	float2 pt = c.pt;
+	float2 nxt = ahead > 0.5 ? c.succ : c.pred;
+	float2 cur = cell;
+	float len = 0.0;
+	for (int i = 0; i < CORNER_WALK; i++) {
+		if (len >= dist || same_cell(nxt, cur) || same_cell(nxt, cell))
+			break;
+		ArcCell n = arc_cell(nxt);
+		if (n.valid < 0.5)
+			break;
+		len += length(n.pt - pt);
+		pt = n.pt;
+		cur = nxt;
+		nxt = ahead > 0.5 ? n.succ : n.pred;
+	}
+	return pt;
+}
+
+// (turn, direction of the edge behind, direction of the edge ahead (angles),
+// contour?). The turn is between the chords to the points one radius either
+// way; the edge directions come from the chords between one and two radii,
+// clear of the corner itself (cut off a little by the tracing).
+float4 PSCornerTurn(VertData v_in) : TARGET
+{
+	float2 cell = floor(v_in.uv * arc_size);
+	ArcCell c = arc_cell(cell);
+	if (c.valid < 0.5)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	float2 b1 = corner_walk(cell, 0.0, corner_radius);
+	float2 f1 = corner_walk(cell, 1.0, corner_radius);
+	float2 b = c.pt - b1;
+	float2 f = f1 - c.pt;
+	if (dot(b, b) < 1.0e-6 || dot(f, f) < 1.0e-6)
+		return float4(0.0, 0.0, 0.0, 1.0);
+	float turn = acos(clamp(dot(normalize(b), normalize(f)), -1.0, 1.0));
+	float2 eb = b1 - corner_walk(cell, 0.0, 2.0 * corner_radius);
+	float2 ef = corner_walk(cell, 1.0, 2.0 * corner_radius) - f1;
+	eb = dot(eb, eb) > 1.0e-6 ? eb : b;
+	ef = dot(ef, ef) > 1.0e-6 ? ef : f;
+	return float4(turn, atan2(eb.y, eb.x), atan2(ef.y, ef.x), 1.0);
+}
+
+// 0 if a larger turn (ties: the smaller cell) lies within the radius.
+float corner_peak(float2 cell, float turn, float ahead)
+{
+	ArcCell c = arc_cell(cell);
+	float2 pt = c.pt;
+	float2 nxt = ahead > 0.5 ? c.succ : c.pred;
+	float2 cur = cell;
+	float len = 0.0;
+	for (int i = 0; i < CORNER_WALK; i++) {
+		if (same_cell(nxt, cur) || same_cell(nxt, cell))
+			break;
+		ArcCell n = arc_cell(nxt);
+		if (n.valid < 0.5)
+			break;
+		len += length(n.pt - pt);
+		if (len > corner_radius)
+			break;
+		float o = arc_state_at(nxt).x;
+		if (o > turn || (o == turn && same_cell(cell_min(nxt, cell), nxt)))
+			return 0.0;
+		pt = n.pt;
+		cur = nxt;
+		nxt = ahead > 0.5 ? n.succ : n.pred;
+	}
+	return 1.0;
+}
+
+// arc_state: the turns. (corner?, angle behind, angle ahead, turn)
+float4 PSCornerMark(VertData v_in) : TARGET
+{
+	float2 cell = floor(v_in.uv * arc_size);
+	float4 t = arc_state_at(cell);
+	float corner = t.w > 0.5 && t.x >= corner_angle ? corner_peak(cell, t.x, 0.0) * corner_peak(cell, t.x, 1.0) : 0.0;
+	return float4(corner, t.y, t.z, t.x);
+}
+
+// (pointer, first corner found, or -1) going ahead (link_ahead) or behind.
+float4 PSLinkInit(VertData v_in) : TARGET
+{
+	float2 cell = floor(v_in.uv * arc_size);
+	ArcCell c = arc_cell(cell);
+	if (c.valid < 0.5)
+		return float4(-1.0, -1.0, -1.0, -1.0);
+	float2 nxt = link_ahead > 0.5 ? c.succ : c.pred;
+	if (same_cell(nxt, cell))
+		return float4(cell, -1.0, -1.0);
+	return float4(nxt, corner_mark_at(nxt).x > 0.5 ? nxt : float2(-1.0, -1.0));
+}
+
+// Pointer jumping: look twice as far for a corner.
+float4 PSLinkStep(VertData v_in) : TARGET
+{
+	float2 cell = floor(v_in.uv * arc_size);
+	float4 s = arc_state_at(cell);
+	if (s.x < 0.0 || s.z >= 0.0)
+		return s;
+	return arc_state_at(s.xy);
+}
+
+// (corner behind, corner ahead): arc_state holds the search behind,
+// corner_next the one ahead.
+float4 PSLinkFinal(VertData v_in) : TARGET
+{
+	float2 cell = floor(v_in.uv * arc_size);
+	return float4(arc_state_at(cell).zw, corner_next.SampleLevel(sdfSampler, corner_uv(cell), 0.0).zw);
+}
+
+technique DrawBoundsReduce
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSBoundsReduce(v_in);
+	}
+}
+
+technique DrawCornerTurn
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSCornerTurn(v_in);
+	}
+}
+
+technique DrawCornerMark
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSCornerMark(v_in);
+	}
+}
+
+technique DrawLinkInit
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSLinkInit(v_in);
+	}
+}
+
+technique DrawLinkStep
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSLinkStep(v_in);
+	}
+}
+
+technique DrawLinkFinal
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSLinkFinal(v_in);
+	}
+}

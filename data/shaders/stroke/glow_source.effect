@@ -43,6 +43,22 @@ sampler_state padSampler {
 	BorderColor = 00000000;
 };
 
+// Corner brackets (see corners-common.effect): their coverage, applied to
+// the glow (corner_use 1) or to the shape that casts it (2).
+uniform texture2d corner_mask;
+uniform float corner_use = 0.0;
+uniform float corner_inner = 0.0;
+
+// m is the shape mask (blurred for the glow); inner glows grow where it is
+// low.
+float corner_apply(float m, float2 uv, float use)
+{
+	if (abs(corner_use - use) > 0.5)
+		return m;
+	float c = corner_mask.SampleLevel(textureSampler, uv, 0.0).r;
+	return corner_inner > 0.5 ? 1.0 - (1.0 - m) * c : m * c;
+}
+
 struct VertData
 {
 	float4 pos : POSITION;
@@ -131,12 +147,13 @@ VertData mainTransform(VertData v_in)
 float4 mainImageThresholdMask(VertData v_in) : TARGET
 {
 	float4 color = image.Sample(textureSampler, v_in.uv);
-	return float4(clamp(color.a / max(threshold, 0.0001), 0.0, 1.0), 0.0, 0.0, 1.0);
+	return float4(corner_apply(clamp(color.a / max(threshold, 0.0001), 0.0, 1.0), v_in.uv, 2.0), 0.0, 0.0, 1.0);
 }
 
 float4 mainImageOuterGlowColor(VertData v_in) : TARGET
 {
 	float4 mask_alpha = glow_mask.Sample(textureSampler, v_in.uv - offset);
+	mask_alpha.r = corner_apply(mask_alpha.r, v_in.uv - offset, 1.0);
 	float4 color = image.Sample(textureSampler, v_in.uv);
 	float4 fill = fill_gradient > 0.5 ? gradient_sample(1.0 - saturate(mask_alpha.r * 2.0)) : glow_fill_color;
 	float4 glow = float4(fill.rgb, clamp(fill.a * intensity * mask_alpha.r, 0.0f, 1.0f));
@@ -147,6 +164,7 @@ float4 mainImageOuterGlowColor(VertData v_in) : TARGET
 float4 mainImageOuterGlowSource(VertData v_in) : TARGET
 {
 	float4 mask_alpha = glow_mask.Sample(textureSampler, v_in.uv - offset);
+	mask_alpha.r = corner_apply(mask_alpha.r, v_in.uv - offset, 1.0);
 	float4 color = image.Sample(textureSampler, v_in.uv);
 	float4 fill_col = srgb_nonlinear_to_linear(glow_fill_source.Sample(textureSampler, v_in.uv));
 	fill_col.rgb *= (fill_col.a > 0.) ? (1. / fill_col.a) : 0.;
@@ -159,6 +177,7 @@ float4 mainImageOuterGlowSource(VertData v_in) : TARGET
 float4 mainImageInnerGlowColor(VertData v_in) : TARGET
 {
 	float4 mask_col = glow_mask.Sample(textureSampler, v_in.uv - offset);
+	mask_col.r = corner_apply(mask_col.r, v_in.uv - offset, 1.0);
 	float4 col = image.Sample(textureSampler, v_in.uv);
 	float mask_alpha = clamp(intensity * (1.0 - mask_col.r), 0.0f, 1.0f) * col.a;
 	float4 fill = fill_gradient > 0.5 ? gradient_sample(saturate(mask_col.r * 2.0 - 1.0)) : glow_fill_color;
@@ -168,6 +187,7 @@ float4 mainImageInnerGlowColor(VertData v_in) : TARGET
 float4 mainImageInnerGlowSource(VertData v_in) : TARGET
 {
 	float4 mask_col = glow_mask.Sample(textureSampler, v_in.uv - offset);
+	mask_col.r = corner_apply(mask_col.r, v_in.uv - offset, 1.0);
 	float4 col = image.Sample(textureSampler, v_in.uv);
 	float4 fill_col = srgb_nonlinear_to_linear(glow_fill_source.Sample(textureSampler, v_in.uv));
 	fill_col.rgb *= (fill_col.a > 0.) ? (1. / fill_col.a) : 0.;

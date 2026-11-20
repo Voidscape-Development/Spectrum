@@ -357,6 +357,7 @@ uniform float dash_phase = 0.0;   // in periods
 
 struct ArcCell {
 	float2 succ;
+	float2 pred;
 	float2 pt;
 	float2 dir;
 	float valid;
@@ -381,6 +382,7 @@ ArcCell arc_cell(float2 cell)
 {
 	ArcCell r;
 	r.succ = float2(-1.0, -1.0);
+	r.pred = float2(-1.0, -1.0);
 	r.pt = cell;
 	r.dir = float2(0.0, 0.0);
 	r.valid = 0.0;
@@ -413,46 +415,63 @@ ArcCell arc_cell(float2 cell)
 
 	// Saddle cells have two segments: pair the exit with the entry just
 	// before it (inside corners connected through the middle).
+	// The cell the contour comes from lies across the edge it enters by.
 	float2 step_dir;
 	float2 p_out;
 	float prev_in;
 	float2 p_prev;
+	float2 prev_dir;
 	if (leave.x > 0.5) {
 		step_dir = float2(0.0, -1.0);
 		p_out = p_top;
 		prev_in = enter.w;
 		p_prev = p_left;
+		prev_dir = float2(-1.0, 0.0);
 	} else if (leave.y > 0.5) {
 		step_dir = float2(1.0, 0.0);
 		p_out = p_right;
 		prev_in = enter.x;
 		p_prev = p_top;
+		prev_dir = float2(0.0, -1.0);
 	} else if (leave.z > 0.5) {
 		step_dir = float2(0.0, 1.0);
 		p_out = p_bottom;
 		prev_in = enter.y;
 		p_prev = p_right;
+		prev_dir = float2(1.0, 0.0);
 	} else {
 		step_dir = float2(-1.0, 0.0);
 		p_out = p_left;
 		prev_in = enter.z;
 		p_prev = p_bottom;
+		prev_dir = float2(0.0, 1.0);
 	}
 	float2 p_in;
-	if (prev_in > 0.5)
+	float2 in_dir;
+	if (prev_in > 0.5) {
 		p_in = p_prev;
-	else if (enter.x > 0.5)
+		in_dir = prev_dir;
+	} else if (enter.x > 0.5) {
 		p_in = p_top;
-	else if (enter.y > 0.5)
+		in_dir = float2(0.0, -1.0);
+	} else if (enter.y > 0.5) {
 		p_in = p_right;
-	else if (enter.z > 0.5)
+		in_dir = float2(1.0, 0.0);
+	} else if (enter.z > 0.5) {
 		p_in = p_bottom;
-	else
+		in_dir = float2(0.0, 1.0);
+	} else {
 		p_in = p_left;
+		in_dir = float2(-1.0, 0.0);
+	}
 
 	float2 succ = cell + step_dir;
 	if (succ.x < 0.0 || succ.y < 0.0 || succ.x >= arc_size.x || succ.y >= arc_size.y)
 		succ = cell;
+	float2 pred = cell + in_dir;
+	if (pred.x < 0.0 || pred.y < 0.0 || pred.x >= arc_size.x || pred.y >= arc_size.y)
+		pred = cell;
+	r.pred = pred;
 	float2 seg = p_out - p_in;
 	float seg_len = length(seg);
 	r.succ = succ;
@@ -597,10 +616,10 @@ technique DrawArcFinal
 	}
 }
 
-// Arc length (x) and outline length (y) at edge point p, from the arc field
-// of the cell it lies in (or the nearest contour cell around it). x is
-// -1e9 when there is none.
-float2 contour_arc(float2 p)
+// The contour cell edge point p lies in (or the nearest one around it; x is
+// -1 when there is none), and the arc length at p and the outline length,
+// from the arc field.
+float4 contour_cell(float2 p)
 {
 	float2 base = floor(p + 0.5);
 	float best = 1.0e9;
@@ -620,19 +639,31 @@ float2 contour_arc(float2 p)
 		}
 	}
 	if (best > 1.0e7)
-		return float2(-1.0e9, 0.0);
-	return float2(info.x - dot(p - best_cell, info.zw), info.y);
+		return float4(-1.0, -1.0, 0.0, 0.0);
+	return float4(best_cell, info.x - dot(p - best_cell, info.zw), info.y);
 }
 
-// Coverage of the dash pattern for a pixel whose nearest edge point is p,
-// `n` px across from the middle of a band `h` px half wide.
-float dash_coverage(float2 p, float n, float h)
+// Arc length (x) and outline length (y) at edge point p; x is -1e9 when
+// there is none.
+float2 contour_arc(float2 p)
 {
+	float4 c = contour_cell(p);
+	return c.x < 0.0 ? float2(-1.0e9, 0.0) : c.zw;
+}
+
+#include "corners-common.effect"
+
+// Coverage of the dash pattern (and corner brackets, ea from corner_eval)
+// for a pixel whose nearest edge point is p, `n` px across from the middle
+// of a band `h` px half wide.
+float dash_coverage(float2 p, float n, float h, float2 ea)
+{
+	float brackets = corner_cov(ea, n, h);
 	if (dash_enabled < 0.5)
-		return 1.0;
+		return brackets;
 	float2 arc = contour_arc(p);
 	if (arc.x < -1.0e8)
-		return 1.0;
+		return brackets;
 	float period = max(dash_period, 1.0);
 	// A whole number of periods around closed outlines.
 	float count = arc.y > 0.0 ? max(floor(arc.y / period + 0.5), 1.0) : 0.0;
@@ -643,31 +674,31 @@ float dash_coverage(float2 p, float n, float h)
 	dx = min(dx, pp - dx);
 	if (dash_round > 0.5) {
 		float e = dx - max(0.5 * len - h, 0.0);
-		return e > 0.0 ? edge_cov(h - length(float2(e, n)), 1.0) : 1.0;
+		return min(brackets, e > 0.0 ? edge_cov(h - length(float2(e, n)), 1.0) : 1.0);
 	}
-	return edge_cov(0.5 * len - dx, 1.0);
+	return min(brackets, edge_cov(0.5 * len - dx, 1.0));
 }
 
 // Dash coverage of outer and inner stroke bands (signed distance sd).
-float outer_dash(float4 field, float sd)
+float outer_dash(float4 field, float sd, float2 ea)
 {
 	float start = max(stroke_offset, 0.0);
 	float h = 0.5 * (stroke_extent - start);
-	return dash_coverage(field.xy, sd - start - h, h);
+	return dash_coverage(field.xy, sd - start - h, h, ea);
 }
 
-float inner_dash(float4 field, float sd)
+float inner_dash(float4 field, float sd, float2 ea)
 {
 	float start = max(stroke_offset, 0.0);
 	float h = 0.5 * (stroke_extent - start);
-	return dash_coverage(field.xy, -sd - start - h, h);
+	return dash_coverage(field.xy, -sd - start - h, h, ea);
 }
 
 // Dash coverage within repeating contour bands at distance d (the band's
 // own middle and half width, in the same warped units as contour_bands).
-float contour_dash_coverage(float2 p, float d)
+float contour_dash_coverage(float2 p, float d, float2 ea)
 {
-	if (dash_enabled < 0.5)
+	if (dash_enabled < 0.5 && corner_enabled < 0.5)
 		return 1.0;
 	float pw = max(contour_spacing_power, 0.01);
 	float period = max(stroke_extent + contour_spacing, 0.0001);
@@ -675,7 +706,7 @@ float contour_dash_coverage(float2 p, float d)
 	// The leading edge of the next band belongs to that band.
 	if (m > 0.5 * (period + stroke_extent))
 		m -= period;
-	return dash_coverage(p, m - 0.5 * stroke_extent, 0.5 * stroke_extent);
+	return dash_coverage(p, m - 0.5 * stroke_extent, 0.5 * stroke_extent, ea);
 }
 
 // The fill of a stroke at `depth` px from the edge (outwards for outer

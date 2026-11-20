@@ -6,6 +6,7 @@
 #include <util/dstr.h>
 #include "obs-utils.h"
 #include "../gradient/gradient.h"
+#include "corners.h"
 
 // Default glow color: white in ABGR
 #define DEFAULT_COLOR_GLOW 0xFFFFFFFF
@@ -131,6 +132,10 @@ struct glow_filter_data {
 	enum glow_fill_type fill_type;
 
 	enum glow_position glow_position;
+
+	// Corner brackets, and this frame's coverage of them (or NULL).
+	struct corners corners;
+	gs_texture_t *corner_mask;
 
 	gs_eparam_t *param_glow_image;
 	gs_eparam_t *param_glow_mask;
