@@ -95,6 +95,8 @@ target_sources(
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
+    src/stroke/corners.c
+    src/stroke/corners.h
     src/stroke/defines.h
     src/stroke/glow.c
     src/stroke/glow.h

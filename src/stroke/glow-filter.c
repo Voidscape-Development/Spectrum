@@ -149,6 +149,7 @@ static void glow_filter_destroy(void *data)
 	}
 
 	alpha_blur_destroy(filter->alpha_blur_data);
+	corners_free(&filter->corners);
 
 	obs_leave_graphics();
 
@@ -188,6 +189,7 @@ static void glow_filter_update(void *data, obs_data_t *settings)
 	filter->fill_type = (enum glow_fill_type)obs_data_get_int(settings, "glow_fill_type");
 
 	filter->glow_position = (enum glow_position)obs_data_get_int(settings, "glow_position");
+	corners_update(&filter->corners, settings, obs_data_get_int(settings, "corner_glow") != CORNER_GLOW_OFF);
 
 	// Resolved on the graphics thread, in video_tick.
 	if (filter->is_source) {
@@ -431,6 +433,8 @@ static obs_properties_t *properties(void *data, bool is_source, enum filter_type
 		obs_property_float_set_suffix(prop, "px");
 	}
 
+	corners_properties(props, true);
+
 	obs_property_t *glow_fill_method_list = obs_properties_add_list(props, "glow_fill_type",
 									obs_module_text("StrokeFilter.FillType"),
 									OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
@@ -551,7 +555,8 @@ static void glow_filter_video_tick(void *data, float seconds)
 			keep = false;
 		}
 	}
-	if (!keep)
+	// Animated corners change the glow's shape: draw it all again.
+	if (!keep || corners_tick(&filter->corners, seconds))
 		filter->rendered = false;
 }
 
@@ -567,6 +572,7 @@ static void glow_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "threshold_outer", 100.0);
 	obs_data_set_default_double(settings, "threshold_inner", 0.0);
 	gradient_defaults(settings, GLOW_GRADIENT_PREFIX);
+	corners_defaults(settings);
 }
 
 static void shadow_filter_defaults(obs_data_t *settings)
@@ -583,6 +589,7 @@ static void shadow_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "threshold_outer", 100.0);
 	obs_data_set_default_double(settings, "threshold_inner", 0.0);
 	gradient_defaults(settings, GLOW_GRADIENT_PREFIX);
+	corners_defaults(settings);
 }
 
 // Defaults for filters/sources created by this version: pad automatically

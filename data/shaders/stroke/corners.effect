@@ -1,0 +1,23 @@
+// Corner brackets for Spectrum Glow and Shadow: the outline pipeline of the
+// stroke, and the coverage of the brackets (R) for every pixel, which the
+// glow applies to itself or to the shape that casts it (see glow.effect).
+#include "jump-flood-common.effect"
+
+float4 PSCornerMask(VertData v_in) : TARGET
+{
+	float2 coord = v_in.uv * uv_size;
+	float4 field = distance_field.Sample(sdfSampler, v_in.uv);
+	if (corner_mode > 0.5 && field.x >= 0.5 * NO_SEED)
+		return float4(0.0, 0.0, 0.0, 1.0);
+	float3 r = corner_eval(coord, field.xy, 0.0, 1.0);
+	return float4(corner_cov(r.xy, 0.0, 0.0), 0.0, 0.0, 1.0);
+}
+
+technique DrawCornerMask
+{
+	pass
+	{
+		vertex_shader = mainTransform(v_in);
+		pixel_shader = PSCornerMask(v_in);
+	}
+}

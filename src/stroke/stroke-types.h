@@ -5,6 +5,7 @@
 #include <util/dstr.h>
 #include "obs-utils.h"
 #include "../gradient/gradient.h"
+#include "corners.h"
 
 #define DEFAULT_COLOR 4294967295
 
@@ -41,11 +42,14 @@ enum stroke_position {
 #define STROKE_DASH_SOLID_LABEL "StrokeFilter.Dash.Solid"
 #define STROKE_DASH_DASHED_LABEL "StrokeFilter.Dash.Dashed"
 #define STROKE_DASH_DOTTED_LABEL "StrokeFilter.Dash.Dotted"
+#define STROKE_DASH_CORNERS_LABEL "StrokeFilter.Dash.Corners"
 
 enum stroke_dash_style {
 	STROKE_DASH_SOLID = 0,
 	STROKE_DASH_DASHED,
 	STROKE_DASH_DOTTED,
+	// Corner brackets only (see corners.h).
+	STROKE_DASH_CORNERS,
 };
 
 enum stroke_dash_cap {
@@ -129,6 +133,7 @@ struct stroke_filter_data {
 	float dash_offset;
 	float dash_speed;
 	double dash_time;
+	struct corners corners;
 
 	uint32_t pad_t;
 	uint32_t pad_b;

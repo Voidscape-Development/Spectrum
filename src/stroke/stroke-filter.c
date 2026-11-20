@@ -115,6 +115,7 @@ static void stroke_filter_destroy(void *data)
 	if (filter->fill_texrender) {
 		gs_texrender_destroy(filter->fill_texrender);
 	}
+	corners_free(&filter->corners);
 
 	obs_leave_graphics();
 
@@ -159,6 +160,7 @@ static void stroke_filter_update(void *data, obs_data_t *settings)
 	filter->dash_cap = (enum stroke_dash_cap)obs_data_get_int(settings, "stroke_dash_cap");
 	filter->dash_offset = (float)obs_data_get_double(settings, "stroke_dash_offset");
 	filter->dash_speed = (float)obs_data_get_double(settings, "stroke_dash_speed");
+	corners_update(&filter->corners, settings, filter->dash_style == STROKE_DASH_CORNERS);
 
 	filter->padding_amount = obs_data_get_int(settings, "stroke_padding") == PADDING_MANUAL
 					 ? (uint32_t)obs_data_get_int(settings, "padding_amount")
@@ -167,7 +169,11 @@ static void stroke_filter_update(void *data, obs_data_t *settings)
 	if (obs_data_get_int(settings, "stroke_padding") == PADDING_AUTO &&
 	    filter->stroke_position == STROKE_POSITION_OUTER) {
 		// Round up and leave a pixel for the anti-aliased outer edge.
-		filter->padding_amount = (uint32_t)ceilf(filter->stroke_size + filter->stroke_offset) + 1;
+		// Mitred corners of outlines can reach further.
+		const bool mitres = filter->corners.enabled && filter->corners.sharp &&
+				    filter->corners.mode == CORNER_MODE_CONTOUR;
+		filter->padding_amount =
+			(uint32_t)ceilf((filter->stroke_size + filter->stroke_offset) * (mitres ? 2.0f : 1.0f)) + 1;
 	}
 
 	filter->ignore_source_border = obs_data_get_bool(settings, "ignore_source_border");
@@ -266,13 +272,12 @@ static void stroke_filter_render_impl(void *data, gs_effect_t *effect)
 
 	// 2. Find the nearest edge of the source for every pixel. Contours can
 	//    extend across the whole source; strokes only out to their extent.
-	render_jf_seed(filter);
 	const bool contour = filter->stroke_position == STROKE_POSITION_OUTER_CONTOUR ||
 			     filter->stroke_position == STROKE_POSITION_INNER_CONTOUR;
 	const float extent = contour ? fmaxf((float)filter->width, (float)filter->height)
 				     : filter->stroke_offset + filter->stroke_size;
-	render_jf_passes(filter, extent);
-	// Arc length along the outlines, for dashes (solid: nothing).
+	render_jf_field(filter, extent);
+	// Arc length along the outlines, for dashes and corners.
 	render_jf_arc(filter);
 
 	render_jf_distance(filter);
@@ -407,6 +412,7 @@ static obs_properties_t *properties(void *data, bool is_source)
 	obs_property_list_add_int(dash_list, obs_module_text(STROKE_DASH_SOLID_LABEL), STROKE_DASH_SOLID);
 	obs_property_list_add_int(dash_list, obs_module_text(STROKE_DASH_DASHED_LABEL), STROKE_DASH_DASHED);
 	obs_property_list_add_int(dash_list, obs_module_text(STROKE_DASH_DOTTED_LABEL), STROKE_DASH_DOTTED);
+	obs_property_list_add_int(dash_list, obs_module_text(STROKE_DASH_CORNERS_LABEL), STROKE_DASH_CORNERS);
 	obs_property_set_long_description(dash_list, obs_module_text("StrokeFilter.Dash.Style.Description"));
 	obs_property_set_modified_callback(dash_list, setting_dash_style_modified);
 
@@ -427,6 +433,7 @@ static obs_properties_t *properties(void *data, bool is_source)
 	p = obs_properties_add_float_slider(props, "stroke_dash_speed", obs_module_text("StrokeFilter.Dash.Speed"),
 					    -1000.0, 1000.0, 0.1);
 	obs_property_float_set_suffix(p, "px/s");
+	corners_properties(props, false);
 
 	obs_property_t *stroke_fill_method_list = obs_properties_add_list(props, "stroke_fill_type",
 									  obs_module_text("StrokeFilter.FillType"),
@@ -555,11 +562,14 @@ static void stroke_filter_video_tick(void *data, float seconds)
 
 	// Marching ants. A cached result keeps its distance and arc fields and
 	// only draws the stroke again (see stroke_filter_render_impl).
-	if (filter->dash_style != STROKE_DASH_SOLID && filter->dash_speed != 0.0f) {
+	if ((filter->dash_style == STROKE_DASH_DASHED || filter->dash_style == STROKE_DASH_DOTTED) &&
+	    filter->dash_speed != 0.0f) {
 		filter->dash_time += seconds;
 		if (keep)
 			filter->redraw_stroke = true;
 	}
+	if (corners_tick(&filter->corners, seconds) && keep)
+		filter->redraw_stroke = true;
 }
 
 static void stroke_filter_defaults(obs_data_t *settings)
@@ -585,6 +595,7 @@ static void stroke_filter_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "stroke_dash_cap", STROKE_DASH_CAP_ROUND);
 	obs_data_set_default_double(settings, "stroke_dash_offset", 0.0);
 	obs_data_set_default_double(settings, "stroke_dash_speed", 0.0);
+	corners_defaults(settings);
 	gradient_defaults(settings, STROKE_GRADIENT_PREFIX);
 }
 
@@ -646,9 +657,11 @@ static bool setting_dash_style_modified(obs_properties_t *props, obs_property_t 
 	enum stroke_dash_style style = (enum stroke_dash_style)obs_data_get_int(settings, "stroke_dash_style");
 	stroke_setting_visibility("stroke_dash_length", style == STROKE_DASH_DASHED, props);
 	stroke_setting_visibility("stroke_dash_cap", style == STROKE_DASH_DASHED, props);
-	stroke_setting_visibility("stroke_dash_gap", style != STROKE_DASH_SOLID, props);
-	stroke_setting_visibility("stroke_dash_offset", style != STROKE_DASH_SOLID, props);
-	stroke_setting_visibility("stroke_dash_speed", style != STROKE_DASH_SOLID, props);
+	const bool dashes = style == STROKE_DASH_DASHED || style == STROKE_DASH_DOTTED;
+	stroke_setting_visibility("stroke_dash_gap", dashes, props);
+	stroke_setting_visibility("stroke_dash_offset", dashes, props);
+	stroke_setting_visibility("stroke_dash_speed", dashes, props);
+	corners_refresh(props, settings, style == STROKE_DASH_CORNERS);
 	return true;
 }
 

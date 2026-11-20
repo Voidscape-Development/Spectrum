@@ -305,158 +305,38 @@ void render_cropped_output(stroke_filter_data_t *data)
 	}
 }
 
-// Seeds the jump flood with the sub-pixel edge points of the source's alpha
-// contour (see drawSeedImage), into buffer_a.
-void render_jf_seed(stroke_filter_data_t *data)
+static gs_texture_t *texrender_texture(gs_texrender_t *t)
 {
-	gs_effect_t *effect = data->effect_jump_flood_sdf;
-	gs_texture_t *input_texture = gs_texrender_get_texture(data->input_texrender);
-	data->distance_field = NULL;
-
-	if (!effect || !input_texture) {
-		return;
-	}
-
-	data->buffer_a = stroke_create_or_reset_texrender_high(data->buffer_a);
-
-	gs_eparam_t *image = gs_effect_get_param_by_name(effect, "image");
-	gs_effect_set_texture(image, input_texture);
-
-	if (data->param_jump_flood_threshold) {
-		gs_effect_set_float(data->param_jump_flood_threshold, data->jump_flood_threshold);
-	}
-	set_uv_size(data);
-
-	stroke_set_blending_parameters();
-	if (gs_texrender_begin(data->buffer_a, data->width, data->height)) {
-		gs_ortho(0.0f, (float)data->width, 0.0f, (float)data->height, -100.0f, 100.0f);
-		while (gs_effect_loop(effect, "DrawThreshold"))
-			gs_draw_sprite(input_texture, 0, data->width, data->height);
-		gs_texrender_end(data->buffer_a);
-	}
-	gs_blend_state_pop();
+	return t ? gs_texrender_get_texture(t) : NULL;
 }
 
-// Runs the jump flood passes, ping-ponging between buffer_a and buffer_b,
-// far enough to find the nearest edge for every pixel within max_extent.
-// Leaves data->distance_field pointing at whichever buffer holds the result.
-void render_jf_passes(stroke_filter_data_t *data, float max_extent)
+// Finds the nearest edge of the source for every pixel within extent
+// (data->distance_field).
+void render_jf_field(stroke_filter_data_t *data, float extent)
 {
 	gs_effect_t *effect = data->effect_jump_flood_sdf;
-	if (!effect || !data->buffer_a) {
-		return;
-	}
-
-	int extent = (int)max_extent + 1;
-	int pass = 1;
-	while (pass < extent) {
-		pass *= 2;
-	}
-
-	set_uv_size(data);
-	stroke_set_blending_parameters();
-
-	for (; pass > 0; pass /= 2) {
-		gs_texture_t *input_texture = gs_texrender_get_texture(data->buffer_a);
-		if (!input_texture) {
-			break;
-		}
-
-		data->buffer_b = stroke_create_or_reset_texrender_high(data->buffer_b);
-
-		gs_eparam_t *image = gs_effect_get_param_by_name(effect, "image");
-		gs_effect_set_texture(image, input_texture);
-		if (data->param_jump_flood_offset) {
-			gs_effect_set_float(data->param_jump_flood_offset, (float)pass);
-		}
-		// Parameters are cleared after every technique.
-		set_uv_size(data);
-
-		if (gs_texrender_begin(data->buffer_b, data->width, data->height)) {
-			gs_ortho(0.0f, (float)data->width, 0.0f, (float)data->height, -100.0f, 100.0f);
-			while (gs_effect_loop(effect, "DrawJumpFloodStep"))
-				gs_draw_sprite(input_texture, 0, data->width, data->height);
-			gs_texrender_end(data->buffer_b);
-		}
-
-		gs_texrender_t *tmp = data->buffer_a;
-		data->buffer_a = data->buffer_b;
-		data->buffer_b = tmp;
-	}
-	gs_blend_state_pop();
-
-	data->distance_field = data->buffer_a;
+	gs_texture_t *input = texrender_texture(data->input_texrender);
+	data->distance_field = effect && input
+				       ? jf_field(effect, input, data->width, data->height, data->jump_flood_threshold,
+						  extent, &data->buffer_a, &data->buffer_b)
+				       : NULL;
 }
 
-// One pass of the arc length pipeline: reads arc_a (and the input's alpha),
-// writes arc_b, then swaps them.
-static void render_arc_pass(stroke_filter_data_t *data, gs_texture_t *input, const char *technique, uint32_t aw,
-			    uint32_t ah)
-{
-	gs_effect_t *effect = data->effect_jump_flood_sdf;
-	gs_texture_t *state = data->arc_a ? gs_texrender_get_texture(data->arc_a) : NULL;
-	data->arc_b = create_or_reset_texrender_format(data->arc_b, GS_RGBA32F);
-
-	gs_effect_set_texture(gs_effect_get_param_by_name(effect, "image"), input);
-	gs_eparam_t *param = gs_effect_get_param_by_name(effect, "arc_state");
-	if (param && state)
-		gs_effect_set_texture(param, state);
-	param = gs_effect_get_param_by_name(effect, "arc_size");
-	if (param) {
-		struct vec2 size;
-		vec2_set(&size, (float)aw, (float)ah);
-		gs_effect_set_vec2(param, &size);
-	}
-	if (data->param_jump_flood_threshold)
-		gs_effect_set_float(data->param_jump_flood_threshold, data->jump_flood_threshold);
-	set_uv_size(data);
-
-	if (gs_texrender_begin(data->arc_b, aw, ah)) {
-		gs_ortho(0.0f, (float)aw, 0.0f, (float)ah, -100.0f, 100.0f);
-		while (gs_effect_loop(effect, technique))
-			gs_draw_sprite(NULL, 0, aw, ah);
-		gs_texrender_end(data->arc_b);
-	}
-
-	gs_texrender_t *tmp = data->arc_a;
-	data->arc_a = data->arc_b;
-	data->arc_b = tmp;
-}
-
-// Measures the arc length along every outline of the input, for dashes (see
-// jump-flood-common.effect). Leaves data->arc_field pointing at the result,
-// or NULL for solid strokes.
+// Measures the arc length along every outline of the input, for dashes and
+// contour corners (see jump-flood-common.effect), into data->arc_field (NULL
+// when unused), then finds the corners.
 void render_jf_arc(stroke_filter_data_t *data)
 {
 	gs_effect_t *effect = data->effect_jump_flood_sdf;
-	gs_texture_t *input = data->input_texrender ? gs_texrender_get_texture(data->input_texrender) : NULL;
-	data->arc_field = NULL;
-	if (!effect || !input || data->dash_style == STROKE_DASH_SOLID) {
-		return;
-	}
-
-	const uint32_t aw = data->width + 1;
-	const uint32_t ah = data->height + 1;
-	// Enough pointer jumps for outlines up to four times the perimeter of
-	// the source; longer ones (rare) just get a few extra starts.
-	int steps = 1;
-	while (steps < 30 && (1ull << steps) < 4ull * (aw + ah)) {
-		steps++;
-	}
-
-	stroke_set_blending_parameters();
-	render_arc_pass(data, input, "DrawArcInit", aw, ah);
-	for (int i = 0; i < steps; i++) {
-		render_arc_pass(data, input, "DrawArcMin", aw, ah);
-	}
-	render_arc_pass(data, input, "DrawRankInit", aw, ah);
-	for (int i = 0; i < steps; i++) {
-		render_arc_pass(data, input, "DrawRankStep", aw, ah);
-	}
-	render_arc_pass(data, input, "DrawArcFinal", aw, ah);
-	gs_blend_state_pop();
-
-	data->arc_field = data->arc_a;
+	gs_texture_t *input = texrender_texture(data->input_texrender);
+	const bool dashes = data->dash_style == STROKE_DASH_DASHED || data->dash_style == STROKE_DASH_DOTTED;
+	const bool corners = data->corners.enabled && data->corners.mode == CORNER_MODE_CONTOUR;
+	data->arc_field = effect && input && (dashes || corners)
+				  ? jf_arc(effect, input, data->width, data->height, data->jump_flood_threshold,
+					   &data->arc_a, &data->arc_b)
+				  : NULL;
+	corners_render(&data->corners, effect, input, texrender_texture(data->arc_field), data->width, data->height,
+		       data->jump_flood_threshold);
 }
 
 // Dash uniforms for the stroke passes.
@@ -464,7 +344,8 @@ static void set_dash_params(stroke_filter_data_t *data)
 {
 	gs_effect_t *effect = data->effect_jump_flood_sdf;
 	gs_texture_t *field = data->arc_field ? gs_texrender_get_texture(data->arc_field) : NULL;
-	const bool enabled = data->dash_style != STROKE_DASH_SOLID && field;
+	const bool enabled = (data->dash_style == STROKE_DASH_DASHED || data->dash_style == STROKE_DASH_DOTTED) &&
+			     field;
 
 	gs_eparam_t *param = gs_effect_get_param_by_name(effect, "dash_enabled");
 	if (param)
@@ -611,6 +492,10 @@ void render_jf_distance(stroke_filter_data_t *data)
 	bool fill_color = (data->fill_type == STROKE_FILL_TYPE_COLOR) || !source_available;
 
 	set_dash_params(data);
+	struct vec4 frame;
+	vec4_set(&frame, (float)data->pad_l, (float)data->pad_t, (float)(data->width - data->pad_r),
+		 (float)(data->height - data->pad_b));
+	corners_bind(&data->corners, effect, texrender_texture(data->arc_field), data->width, data->height, &frame);
 
 	if (data->param_stroke_uv_size) {
 		struct vec2 uv_size;
