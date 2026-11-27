@@ -52,11 +52,6 @@ extern struct obs_source_info spectrum_gradient_map_filter;
 extern struct obs_source_info spectrum_long_shadow_filter;
 extern struct obs_source_info spectrum_color_tools_filter;
 extern struct obs_source_info spectrum_stylize_filter;
-extern struct obs_source_info spectrum_light_filter;
-extern struct obs_source_info spectrum_noise_source;
-
-/* Retro */
-extern struct obs_source_info spectrum_retro_filter;
 
 /* Transitions */
 extern struct obs_source_info spectrum_gradient_wipe_transition;
@@ -125,10 +120,6 @@ bool obs_module_load(void)
 	register_fx_filter(&spectrum_long_shadow_filter);
 	register_fx_filter(&spectrum_color_tools_filter);
 	register_fx_filter(&spectrum_stylize_filter);
-	obs_register_source(&spectrum_light_filter);
-	obs_register_source(&spectrum_noise_source);
-
-	register_fx_filter(&spectrum_retro_filter);
 
 	obs_register_source(&spectrum_gradient_wipe_transition);
 	obs_register_source(&spectrum_shape_wipe_transition);

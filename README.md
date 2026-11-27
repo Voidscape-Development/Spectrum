@@ -40,7 +40,7 @@ A gradient source built to never band, with plenty of control.
 - **Mesh gradients:** a grid of 2x2 up to 5x5 color points that you can move freely. Colors blend smoothly between the points as bicubic patches, evaluated in float per pixel in the chosen color space (Oklab by default). Turn off smooth blending for straight bilinear patches.
 - **Free color points:** 2 to 8 colors placed anywhere, with a softness control from near flat color areas to one wide, soft wash.
 - **Point drift:** mesh and color points can wander slowly for a living background. Mesh corners stay put and edge points slide along their edge, so the frame stays covered.
-- **Colors from Source:** the "Colors from Source..." button reads a frame of any source, finds its dominant colors (k-means in Oklab) and turns them into color stops, ordered dark to light, around the hue wheel or by how common they are. On a mesh or color point gradient it also recolors the points. The button is available everywhere the gradient settings appear: Stroke, Glow, Shadow, Noise, Gradient Map and Long Shadow.
+- **Colors from Source:** the "Colors from Source..." button reads a frame of any source, finds its dominant colors (k-means in Oklab) and turns them into color stops, ordered dark to light, around the hue wheel or by how common they are. On a mesh or color point gradient it also recolors the points. The button is available everywhere the gradient settings appear: Stroke, Glow, Shadow, Gradient Map and Long Shadow.
 - **Color stops editor:** click to add stops, drag to move them, drag down to remove them, and drag the midpoint diamonds between stops. Each segment has its own easing (linear, smooth, ease in/out, step). Includes built-in presets, and you can save your own.
 - **Color blending:** Oklab (perceptual, the default), OkLCh hue paths (shorter, longer, increasing, decreasing), linear RGB or classic sRGB. Colors that would fall outside sRGB are brought back in by reducing chroma, not by clipping.
 - **Extend modes:** pad, repeat and mirror, with anti-aliased seams.
@@ -48,12 +48,7 @@ A gradient source built to never band, with plenty of control.
 - **Finish:** opacity and optional film grain.
 - **No banding:** stops are baked into a 32-bit float lookup table and blended in float. Only the final output is quantised, and it gets triangular-noise dither sized to the render target (8 or 10 bit). On HDR and float canvases the gradient renders in float and needs no dither.
 
-The same gradient engine is available as fills elsewhere: **Gradient** and **Gradient Across Stroke** in Spectrum Stroke, **Gradient** and **Gradient by Glow Strength** in Glow and Shadow, plus the Noise, Gradient Map and Long Shadow effects below.
-
-### Spectrum Noise (source)
-Animated procedural backgrounds such as lava, plasma, aurora, fog, marble and cells. Choose value, Perlin, simplex, cell or cell-edge noise, layered as smooth fBm, turbulence or ridged noise. Add domain warping, flow and evolution, then map the result through a gradient.
-
-Patterns: a twinkling **starfield** with parallax layers (Detail Layers set the depth layers; with Flow, nearer layers pass faster), soft **drifting particles/dust**, **water caustics**, animated **Truchet tiles** and a **hex grid** with pulsing cells and glowing edges. Density, Size / Line Width and Twinkle / Pulse shape them.
+The same gradient engine is available as fills elsewhere: **Gradient** and **Gradient Across Stroke** in Spectrum Stroke, **Gradient** and **Gradient by Glow Strength** in Glow and Shadow, plus the Gradient Map and Long Shadow effects below.
 
 ### Spectrum Gradient Map (filter)
 Maps brightness, perceptual lightness or a single channel through a gradient, for duotones, thermal looks and stylized grades. It has black/white points, gamma, 26 blend modes and an amount.
@@ -64,16 +59,8 @@ Exposure, temperature/tint, contrast, saturation and vibrance, levels, master an
 ### Spectrum Long Shadow (filter)
 Flat-design long shadows or a 3D extrusion along any direction. Fill with a color, a gradient along the length, or the source's own colors darkened with depth.
 
-### Spectrum Stylize and Light (filters)
-- **Stylize:** chromatic aberration, glitch, CRT curvature and scanlines, mono or CMYK halftone, posterize with optional ordered dither, film grain and vignette.
-- **Light:** bloom (a float blur pyramid), light rays, lens flare, and a point light that uses the source's alpha as a bump map.
-
-### Spectrum Retro (filter)
-Four retro and painterly looks, each off by default. Only the enabled ones run, as separate passes, so the filter costs nothing while they are all off.
-- **Oil Paint:** an anisotropic Kuwahara filter (polynomial sector weights, steered by the smoothed structure tensor) with radius, sharpness and brush direction (set it to 0 for a generalised Kuwahara).
-- **ASCII Art:** the picture as a grid of characters picked by brightness from a built-in 5x7 glyph ramp, anti-aliased, with character size, original colors, mono, or a custom text color on a background color, and an amount to blend with the original.
-- **Retro Palette:** Game Boy, CGA, CGA/EGA 16 colors, PICO-8 style, 1-bit or a custom 2-4 color palette, with ordered (Bayer 2x2/4x4/8x8) or blue noise dithering and a pixel size. Colors are matched in Oklab (or by brightness only, for shade palettes) and the two nearest palette colors are mixed in linear light, so dithered areas keep their brightness.
-- **VHS:** animated tracking errors (a rolling band of tearing and snow), wobble, chroma bleed and delay, tape noise and dropouts, and head switching noise at the bottom.
+### Spectrum Stylize (filter)
+Chromatic aberration, glitch, CRT curvature and scanlines, mono or CMYK halftone, posterize with optional ordered dither, film grain and vignette.
 
 ### Spectrum Composite (filter)
 Blends another source or an image file onto the source with 26 Photoshop-style blend modes (multiply, screen, overlay, soft/hard/vivid/linear/pin light, color dodge/burn, linear dodge/burn, hard mix, difference, exclusion, subtract, divide, hue, saturation, color, luminosity, lighter/darker color...) and an opacity. Place the layer stretched, fit, filled, tiled or at its original size, then move, scale and rotate it. Composite over the source or only inside its alpha, swap the order to put the layer underneath, and fade it with an opacity mask from another source's brightness or alpha, or from a gradient.
@@ -114,7 +101,7 @@ Scene transitions that blend in linear light, dither their output, keep HDR valu
 
 ### Hotkeys and performance
 - **Hotkeys:** every Spectrum filter gets Enable and Disable hotkeys (bind one key to both to toggle) in Settings > Hotkeys. Bindings are saved with the scene collection.
-- **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Stylize, Retro, Composite and Warp filters interpolate between two filter states.
+- **Move Transition:** when the Move Transition plugin is installed, the Blur, Mask, Stroke, Glow, Shadow, Gradient Map, Color Tools, Long Shadow, Stylize, Composite and Warp filters interpolate between two filter states.
 - **Result caching:** Stroke, Glow and Shadow can cache their result for static inputs such as text and logos, so the distance field or blur isn't recomputed every frame (marching dashes keep moving on a cached stroke).
 
 ## Building
