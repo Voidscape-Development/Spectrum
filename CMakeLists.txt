@@ -171,15 +171,10 @@ target_sources(
     src/fx/long-shadow.c
     src/fx/color-tools.c
     src/fx/stylize.c
-    src/fx/light.c
-    src/fx/noise-source.c
 )
 
 # Shared infrastructure: Enable/Disable hotkeys for every filter
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/common/source-hooks.c src/common/source-hooks.h)
-
-# Retro (oil paint, ASCII, palettes, VHS)
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/fx/retro.c)
 
 # Transitions
 target_sources(
