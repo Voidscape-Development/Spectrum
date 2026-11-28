@@ -112,13 +112,20 @@ char *stroke_load_shader_from_file(const char *file_name)
 		line_i++;
 		if (strncmp(line, "#include", 8) == 0) {
 			// Open the included file, place contents here.
-			const char *pos = strrchr(file_name, '/');
-			const size_t length = pos - file_name + 1;
-			struct dstr include_path = {0};
-			dstr_ncopy(&include_path, file_name, length);
-			char *start = strchr(line, '"') + 1;
+			// Nested includes come from os_get_abs_path_ptr(), which uses
+			// backslashes on Windows: split on either separator.
+			const char *slash = strrchr(file_name, '/');
+			const char *bslash = strrchr(file_name, '\\');
+			const char *pos = slash > bslash ? slash : bslash;
+			char *start = strchr(line, '"');
 			char *end = strrchr(line, '"');
-
+			if (!pos || !start || end <= start) {
+				blog(LOG_WARNING, "[Spectrum] Bad include in %s: %s", file_name, line);
+				continue;
+			}
+			start++;
+			struct dstr include_path = {0};
+			dstr_ncopy(&include_path, file_name, pos - file_name + 1);
 			dstr_ncat(&include_path, start, end - start);
 			char *abs_include_path = os_get_abs_path_ptr(include_path.array);
 			char *file_contents = abs_include_path ? stroke_load_shader_from_file(abs_include_path) : NULL;
